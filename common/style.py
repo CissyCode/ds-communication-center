@@ -69,7 +69,16 @@ def inject_base_css() -> None:
 
         html, body, [class*="css"] { font-family: 'Noto Sans KR', -apple-system, 'Segoe UI', sans-serif; }
 
-        .block-container { padding-top: 2rem; padding-bottom: 2rem; max-width: 1280px; }
+        /* Streamlit's own fixed header (Deploy/menu bar) is 60px tall with an
+           opaque background and a very high z-index — padding-top must clear
+           it or the first element on the page renders partly hidden behind it. */
+        .block-container { padding-top: 5rem; padding-bottom: 2rem; max-width: 1280px; }
+
+        .dcc-sidebar-badge {
+            display: inline-block; font-size: .7rem; font-weight: 600;
+            color: #9FB0CE !important; border: 1px solid #35415A; border-radius: 4px;
+            padding: .2rem .55rem; margin: .3rem 0 .8rem 0;
+        }
 
         .dcc-appname {
             font-size: 1.05rem; font-weight: 700; letter-spacing: -0.01em; color: #16202F;
@@ -151,6 +160,13 @@ def inject_base_css() -> None:
 
 def app_name(unit: str = "DS COMMUNICATION CENTER") -> None:
     st.markdown(f'<div class="dcc-appname">{unit}</div>', unsafe_allow_html=True)
+
+
+def sidebar_demo_badge() -> None:
+    """One persistent 'this is fake data' notice, shown once in the sidebar
+    instead of repeating a disclaimer on every screen."""
+    with st.sidebar:
+        st.markdown('<div class="dcc-sidebar-badge">Demo · Fake Data Prototype</div>', unsafe_allow_html=True)
 
 
 def page_title(title: str, subtitle: str | None = None) -> None:

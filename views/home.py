@@ -8,7 +8,10 @@ from common import data as D
 from common import nav as N
 from common import style as S
 
-_UPDATE_TARGET = {"MEDIA": "media", "NEW MEDIA": "new_media", "MARCOM": "marcom", "RESOURCES": "resources", "공지": "media"}
+_UPDATE_TARGET = {
+    "MEDIA": "media_dashboard", "NEW MEDIA": "new_media", "MARCOM": "marcom",
+    "RESOURCES": "resources", "공지": "media_dashboard",
+}
 
 
 def render():
@@ -79,8 +82,8 @@ def render():
             if event.selection and event.selection.rows:
                 sel_issue_id = top_issues.iloc[event.selection.rows[0]]["issue_id"]
                 del st.session_state["home_issues_select"]
-                N.go_to_media("이슈 관리", focus_id=sel_issue_id, focus_col="issue_id")
-            st.caption("행을 클릭하면 MEDIA > 이슈 관리로 이동합니다.")
+                N.go_to("media_issues_risk", focus_id=sel_issue_id, focus_col="issue_id")
+            st.caption("행을 클릭하면 MEDIA > Issues & Risk로 이동합니다.")
 
     row2_l, row2_m, row2_r = st.columns(3)
 
@@ -90,7 +93,7 @@ def render():
         S.list_row("주요 이슈", f"{len(issues)}건")
         S.list_row("예정 보도자료", f"{(press_releases['status'] == '배포 예정').sum()}건")
         if st.button("MEDIA 보기", key="home_goto_media"):
-            N.go_to_media("대응 이력")
+            N.go_to("media_dashboard")
 
     with row2_m:
         S.section_title("NEW MEDIA")

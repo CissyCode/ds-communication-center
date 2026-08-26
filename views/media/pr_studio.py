@@ -12,6 +12,8 @@ ASSET_KINDS = ["보도자료", "참고자료", "Q&A", "이미지/영상"]
 
 
 def render():
+    S.page_title("MEDIA · PR Studio", "보도자료를 중심으로 Q&A·피칭자료 등 PR 콘텐츠를 제작하는 공간입니다.")
+
     df = D.load_press_releases()
     st.caption("보도자료 전용 데이터가 없어, 일정 캘린더의 '보도자료 지원' 항목을 배포 로그로 표시합니다.")
     if df.empty:
@@ -56,7 +58,6 @@ def render():
     )
 
     S.section_title("자료")
-    st.caption("현재 FAKE DATA 범위에서는 실제 파일이 없어 구조만 표시합니다.")
     for kind in ASSET_KINDS:
         S.list_row(kind, "미등록")
 

@@ -34,7 +34,7 @@ def _reporter_field(key_prefix: str, reporters: list[dict], current_name: str | 
 
 
 def _create_form(reporters: list[dict]):
-    with st.expander("+ 신규 대응 등록"):
+    with st.expander("+ 신규 문의 접수"):
         with st.form("ph_create_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
@@ -94,6 +94,8 @@ def _edit_form(r: dict, reporters: list[dict]):
 
 
 def render():
+    S.page_title("MEDIA · Response Desk", "기자 문의 접수부터 대응 완료까지를 관리합니다. 완료된 건은 자동으로 대응 이력이 됩니다.")
+
     reporters = RS.list_active()
     _create_form(reporters)
 
@@ -174,7 +176,7 @@ def render():
             unsafe_allow_html=True,
         )
         if st.button("이슈 상세 보기", key=f"ph_goto_issue_{sel_id}"):
-            N.jump_media("이슈 관리", focus_id=related_issue["issue_id"], focus_col="issue_id")
+            N.go_to("media_issues_risk", focus_id=related_issue["issue_id"], focus_col="issue_id")
 
     S.section_title("관련 기자")
     reporters_csv = D.load_reporters()
@@ -184,7 +186,7 @@ def render():
     else:
         st.markdown(r["reporter_name"])
         if st.button("기자 상세 보기", key=f"ph_goto_reporter_{sel_id}"):
-            N.jump_media("기자 DB", focus_id=reporter_id, focus_col="reporter_id")
+            N.go_to("media_reporter_crm", focus_id=reporter_id, focus_col="reporter_id")
 
     S.panel_close()
 

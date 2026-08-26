@@ -11,6 +11,7 @@ SENTIMENT_COLOR = {"긍정": "#2A6E49", "중립": "#7A8496", "부정": "#9A3A32"
 
 
 def render():
+    S.page_title("MEDIA · Media Intelligence", "언론 환경 전체 동향을 분석합니다.")
     st.caption("여기는 운영 화면이 아니라 언론 환경 전체를 보는 분석 화면입니다 (INSIGHTS와 달리 MEDIA 내부 데이터만 다룹니다).")
 
     df = D.load_media_monitoring()

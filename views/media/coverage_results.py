@@ -20,6 +20,7 @@ def _related_pr_activity(row_tags: list[str], press):
 
 
 def render():
+    S.page_title("MEDIA · Coverage & Results", "보도 현황과 PR 활동 결과를 확인합니다.")
     st.caption("Media Intelligence(언론 전체 동향)와 달리, 우리가 진행한 PR 활동이 실제로 어떻게 보도됐는지를 봅니다.")
 
     df = D.load_media_monitoring()

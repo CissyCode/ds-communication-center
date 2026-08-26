@@ -22,6 +22,7 @@ def _infer_type(title: str) -> str:
 
 
 def render():
+    S.page_title("MEDIA · Media Programs", "기자간담회·사업장초청 등 미디어 프로그램 일정을 관리합니다.")
     df = D.load_media_programs()
     st.caption("일정은 Master Schedule(SCHEDULE)의 데이터를 그대로 참조합니다 — 별도 캘린더를 두지 않습니다.")
     if df.empty:
@@ -73,7 +74,6 @@ def render():
     st.markdown(f"- **참석 기자**: 데이터 없음 (기자 초청 명단이 아직 관리되지 않습니다)\n- **참석 임원**: {r['attendees'] or '-'}")
 
     S.section_title("자료")
-    st.caption("현재 FAKE DATA 범위에서는 실제 파일이 없어 구조만 표시합니다.")
     S.list_row("행사 자료", "미등록")
 
     S.section_title("관련 대응")

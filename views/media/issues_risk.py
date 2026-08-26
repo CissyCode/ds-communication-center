@@ -20,9 +20,10 @@ def _timeline(origin_date, origin_label, press_hit, monitoring_hit):
 
 
 def render():
-    df = D.load_issues()
+    S.page_title("MEDIA · Issues & Risk", "이슈와 리스크 현안을 관리합니다.")
     st.caption("첨부 데이터에 별도 이슈 관리 항목이 없어, 미해결 대응·긴급 공지·부정 보도를 하나의 워치리스트로 재구성했습니다.")
 
+    df = D.load_issues()
     if df.empty:
         st.info("현재 관리 중인 이슈가 없습니다.")
         return
@@ -100,7 +101,7 @@ def render():
                 st.markdown(f"{pr['date'].date()} · [{pr['media']}] {pr['topic']}")
             with c2:
                 if st.button("보기", key=f"is_goto_press_{pr['press_history_id']}"):
-                    N.jump_media("대응 이력", focus_id=pr["press_history_id"], focus_col="press_history_id")
+                    N.go_to("media_response_desk", focus_id=pr["press_history_id"], focus_col="press_history_id")
 
     if len(related["reporters"]):
         st.markdown("**관련 기자**")
@@ -110,7 +111,7 @@ def render():
                 st.markdown(f"{rp['name']} · {rp['media']}")
             with c2:
                 if st.button("보기", key=f"is_goto_reporter_{rp['reporter_id']}"):
-                    N.jump_media("기자 DB", focus_id=rp["reporter_id"], focus_col="reporter_id")
+                    N.go_to("media_reporter_crm", focus_id=rp["reporter_id"], focus_col="reporter_id")
 
     if len(related["monitoring"]):
         st.markdown("**관련 보도**")

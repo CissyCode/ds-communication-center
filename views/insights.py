@@ -119,7 +119,7 @@ def render():
     )
     if event.selection and event.selection.rows:
         module = feed.iloc[event.selection.rows[0]]["module"]
-        target = {"MEDIA": "media", "NEW MEDIA": "new_media", "MARCOM": "marcom"}.get(module)
+        target = {"MEDIA": "media_dashboard", "NEW MEDIA": "new_media", "MARCOM": "marcom"}.get(module)
         del st.session_state["insights_activity_select"]
         if target:
             N.go_to(target)

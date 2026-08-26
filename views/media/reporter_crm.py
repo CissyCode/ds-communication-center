@@ -11,6 +11,8 @@ from . import _shared as X
 
 
 def render():
+    S.page_title("MEDIA · Reporter CRM", "기자 기본정보와 관심 Topic, 접촉·대응 이력, 관계 메모를 한 곳에서 확인합니다.")
+
     df = D.load_reporters()
 
     f1, f2, f3, f4 = st.columns([1.2, 1, 1.4, 1.2])
@@ -94,7 +96,7 @@ def render():
                 )
             with c2:
                 if st.button("보기", key=f"rp_goto_press_{r['press_history_id']}"):
-                    N.jump_media("대응 이력", focus_id=r["press_history_id"], focus_col="press_history_id")
+                    N.go_to("media_response_desk", focus_id=r["press_history_id"], focus_col="press_history_id")
 
         S.section_title(f"최근 접촉 ({len(rel_contacts)})")
         if rel_contacts.empty:
