@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Runtime SQLite DB + uploaded files — regenerated automatically on startup
+# via common/db.py:ensure_ready(), never committed.
+storage/
+
+.streamlit/secrets.toml
