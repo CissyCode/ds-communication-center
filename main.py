@@ -5,6 +5,7 @@ import streamlit as st
 from common import db as DB
 from common import nav as N
 from common import style as S
+from common import ui as U
 from views import home, insights, marcom, new_media, resources, schedule
 from views.media import pages as media_pages
 
@@ -51,5 +52,6 @@ pg = st.navigation({
 })
 
 S.inject_base_css()
+U.inject_css()  # dashboard layer — must follow the base sheet, it widens the board
 S.sidebar_demo_badge()
 pg.run()

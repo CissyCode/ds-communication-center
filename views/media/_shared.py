@@ -13,11 +13,23 @@ import streamlit as st
 
 
 def consume_focus(id_col: str) -> str | None:
-    """Return + clear a pending cross-leaf focus request if it targets this id column."""
+    """Return + clear a pending cross-leaf focus request if it targets this id column.
+
+    Two carriers, because the app links two ways: session state (a widget event
+    routed through nav.go_to) and the query string (a dashboard anchor built by
+    nav.href). Both are one-shot — cleared on read so the detail panel stays
+    closable instead of reopening on every rerun.
+    """
     focus = st.session_state.get("media_focus")
     if focus and focus.get("col") == id_col:
         del st.session_state["media_focus"]
         return focus["id"]
+
+    params = st.query_params
+    if "focus" in params and params.get("focus_col", id_col) == id_col:
+        focus_id = params["focus"]
+        st.query_params.clear()
+        return focus_id
     return None
 
 
