@@ -183,11 +183,15 @@ def section_title(text: str) -> None:
 
 def stat_strip(items: list[tuple[str, str, str | None]]) -> None:
     """items: list of (label, value, unit_or_none)."""
-    cells = "".join(
-        f'<div class="dcc-stat"><div class="label">{label}</div>'
-        f'<div class="value">{value}{f" <span class=\'unit\'>{unit}</span>" if unit else ""}</div></div>'
-        for label, value, unit in items
-    )
+    # Built with an explicit loop rather than a nested f-string: escaping quotes
+    # inside an f-string expression is a syntax error before Python 3.12.
+    cells = ""
+    for label, value, unit in items:
+        unit_html = f' <span class="unit">{unit}</span>' if unit else ""
+        cells += (
+            f'<div class="dcc-stat"><div class="label">{label}</div>'
+            f'<div class="value">{value}{unit_html}</div></div>'
+        )
     st.markdown(f'<div class="dcc-stats">{cells}</div>', unsafe_allow_html=True)
 
 
