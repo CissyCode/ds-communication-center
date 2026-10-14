@@ -1,0 +1,10 @@
+﻿segment,samsung_rank,benchmark_company,benchmark_rank,benchmark_share_pct,source,raw_note
+반도체 total,1,인텔,2,10.2,Omdia,1위 (2위 인텔 10.2%)
+메모리 total,1,SK하이닉스,2,23.2,Omdia,1위 (2위 하닉 23.2%)
+시스템 total,10,인텔,1,13.5,Omdia,10위(1위 인텔 13.5%)
+D램,1,SK하이닉스,2,28.0,Omdia,1위 (2위 하닉 28.0%)
+낸드플래시,1,SK하이닉스,2,18.8,Omdia,1위 (2위 하닉 18.8%)
+SSD,1,인텔,2,13.5,Omdia,1위 (2위 인텔 13.5%)
+모바일 SoC,5,퀄컴,1,37.7,SA,5위 (1위 퀄컴 37.70%)
+이미지센서,2,소니,1,47.9,TSR,2위(1위 소니 47.9%)
+파운드리,1,TSMC,,50.2,Omdia,1위(TSMC 50.2%)

@@ -1,0 +1,46 @@
+﻿segment,year,share_pct,source
+반도체 total,2018,15.39,Omdia
+반도체 total,2019,12.26,Omdia
+반도체 total,2020,12.00,Omdia
+반도체 total,2021,12.82,Omdia
+반도체 total,2022,11.30,Omdia
+메모리 total,2018,39.77,Omdia
+메모리 total,2019,38.27,Omdia
+메모리 total,2020,36.60,Omdia
+메모리 total,2021,37.60,Omdia
+메모리 total,2022,37.30,Omdia
+시스템 total,2018,2.98,Omdia
+시스템 total,2019,2.91,Omdia
+시스템 total,2020,2.78,Omdia
+시스템 total,2021,2.84,Omdia
+시스템 total,2022,3.00,Omdia
+D램,2018,42.80,Omdia
+D램,2019,42.70,Omdia
+D램,2020,41.70,Omdia
+D램,2021,42.70,Omdia
+D램,2022,42.50,Omdia
+낸드플래시,2018,38.00,Omdia
+낸드플래시,2019,35.90,Omdia
+낸드플래시,2020,33.70,Omdia
+낸드플래시,2021,33.90,Omdia
+낸드플래시,2022,33.70,Omdia
+SSD,2018,36.60,Omdia
+SSD,2019,30.50,Omdia
+SSD,2020,33.30,Omdia
+SSD,2021,37.50,Omdia
+SSD,2022,,Omdia
+모바일 SoC,2018,12.90,SA
+모바일 SoC,2019,12.20,SA
+모바일 SoC,2020,10.60,SA
+모바일 SoC,2021,6.60,SA
+모바일 SoC,2022,,SA
+이미지센서,2018,20.70,TSR
+이미지센서,2019,18.10,TSR
+이미지센서,2020,19.60,TSR
+이미지센서,2021,19.70,TSR
+이미지센서,2022,18.10,TSR
+파운드리,2018,16.00,Omdia
+파운드리,2019,16.40,Omdia
+파운드리,2020,16.30,Omdia
+파운드리,2021,16.30,Omdia
+파운드리,2022,,Omdia
