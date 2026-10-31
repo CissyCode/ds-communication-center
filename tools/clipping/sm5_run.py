@@ -1,0 +1,428 @@
+"""조간 스크랩 검토 초안 자동 실행(스크랩마스터5 화면 자동화). 관리자 권한 터미널에서 실행.
+
+흐름:
+  1) [검색] 탭 → 자동검색 [결과 갱신] → 검색어별 건수 기록
+  2) 후보 검색어 그룹 결과를 공식 [엑셀 저장]으로 받기
+  3) 엔진(scrapdraft)으로 선정·분류·배열
+  4) 검토 그룹에 이미 있는 기사(Serial)는 건너뛰고, 새 추천 기사만 체크해 [스크랩]
+  5) 검토 그룹을 [엑셀로 내보내기]로 받아 Serial 검증
+  6) 검토 그룹을 추천 순서로 정렬([맨 위로]) 후 다시 내보내 검증
+
+단계 제한(--until): export(2까지, 스크랩 안 함) / scrap(5까지) / order(6까지, 기본)
+사람이 검토 그룹에 직접 넣은 기사가 있으면 정렬하지 않고 추가만 한다.
+
+예:
+  python sm5_run.py --until export                       읽기·내보내기만(안전 확인용)
+  python sm5_run.py --group 자동검토_테스트 --until scrap
+  python sm5_run.py                                      오늘 날짜 검토 그룹(자동검토_MMDD)에 전체 실행
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+import time
+from datetime import date, datetime
+from pathlib import Path
+
+import pandas as pd
+from pywinauto import Desktop, keyboard, mouse
+
+from scrapdraft.config import load_config
+from scrapdraft.engine import build_draft
+from scrapdraft.excel_io import file_sha256, read_export
+from scrapdraft.ledger import Ledger
+from scrapdraft.report import write_report
+from sm5_read import OUT, by_id, main_window, read_keywords, read_popups, texts
+
+HERE = Path(__file__).resolve().parent
+
+# 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
+FIRST_ROW_DY = 75
+TITLE_DX = 120
+BUTTON_DY = -27
+RESULT_BUTTONS = {"전체 선택": 51, "선택 해제": 128, "스크랩": 275, "엑셀 저장": 346}
+PAGE_SIZE = 500   # 검색결과 '500개씩 보기' 기준. 넘으면 멈춤.
+
+SEARCH_COLS = ["기사 제목", "부제목", "매체명", "지면번호", "카테고리", "크기", "발행일", "검색어", "연번", "구분", "기사 시리얼"]
+GROUP_COLS = ["기사 제목", "매체명", "지면번호", "연번", "기사 시리얼"]
+
+
+class Stop(Exception):
+    """안전하게 멈춰야 하는 상황."""
+
+
+def log(msg: str) -> None:
+    print(f"[{datetime.now():%H:%M:%S}] {msg}", flush=True)
+
+
+# ---------- 화면 요소 ----------
+
+def need(win, auto_id: str):
+    e = by_id(win, auto_id)
+    if e is None or e.rectangle().width() == 0:
+        raise Stop(f"화면 요소 '{auto_id}'가 보이지 않습니다.")
+    return e
+
+
+def click_rel(rect, dx, dy, from_bottom=False):
+    xy = (int(rect.left + dx), int((rect.bottom if from_bottom else rect.top) + dy))
+    mouse.click(coords=xy)
+    time.sleep(0.4)
+
+
+def result_button(win, name: str):
+    r = need(win, "tcSearchResultTab").rectangle()
+    click_rel(r, RESULT_BUTTONS[name], BUTTON_DY, from_bottom=True)
+
+
+def no_popup_or_stop(win, where: str):
+    pops = read_popups(win)
+    if not pops[0].startswith("팝업 창이 없습니다"):
+        raise Stop(f"{where} 뒤에 예상하지 못한 창이 떴습니다:\n" + "\n".join(pops[:40]))
+
+
+def scrap_tabs(win) -> list[tuple[object, str]]:
+    tab = need(win, "ScrapGroupTab")
+    out = []
+    for ti in tab.children(control_type="TabItem"):
+        name = "".join(x for x in texts(ti) if x not in ("×", "ScrapMaster5.ScrapGroup"))
+        out.append((ti, name))
+    return out
+
+
+def split_name(label: str) -> tuple[str, int | None]:
+    m = re.match(r"^(.*?)\s*\[(\d+)\]\s*$", label)
+    return (m.group(1), int(m.group(2))) if m else (label, None)
+
+
+def group_count(win, group: str) -> int | None:
+    for _, label in scrap_tabs(win):
+        name, n = split_name(label)
+        if name == group:
+            return n
+    return None
+
+
+def select_group(win, group: str) -> None:
+    for ti, label in scrap_tabs(win):
+        if split_name(label)[0] == group:
+            ti.select()
+            time.sleep(0.5)
+            if not ti.is_selected():
+                ti.click_input()
+                time.sleep(0.5)
+            if not ti.is_selected():
+                raise Stop(f"스크랩 그룹 '{group}' 탭을 선택하지 못했습니다.")
+            return
+    raise Stop(f"스크랩 그룹 '{group}'이 없습니다.")
+
+
+def ensure_group(win, group: str) -> None:
+    if group_count(win, group) is not None:
+        return
+    log(f"스크랩 그룹 '{group}' 만들기")
+    need(win, "buttonScrapGroupAdd").click()
+    time.sleep(0.8)
+    box = by_id(win, "tbNewScrapGroup")
+    add = by_id(win, "btnAddScrapGroup")
+    if box is None or add is None:
+        raise Stop(f"그룹 추가 창을 찾지 못했습니다. '{group}' 그룹을 직접 만든 뒤 다시 실행해 주세요.")
+    box.set_edit_text(group)
+    add.click()
+    time.sleep(0.8)
+    keyboard.send_keys("{ESC}")
+    time.sleep(0.5)
+    if group_count(win, group) is None:
+        raise Stop(f"'{group}' 그룹을 만들지 못했습니다. 직접 만든 뒤 다시 실행해 주세요.")
+
+
+def group_tree_item(win, group: str):
+    tree = need(win, "treeScrapArticleList")
+    for item in tree.children(control_type="TreeItem"):
+        if item.element_info.name != "ScrapMaster5.ScrapGroup":
+            continue
+        t = texts(item)
+        if t and t[0] == group:
+            return item
+    raise Stop(f"스크랩 목록 트리에서 '{group}'을 찾지 못했습니다.")
+
+
+def articles_of(win, group: str) -> list:
+    item = group_tree_item(win, group)
+    kids = [k for k in item.children(control_type="TreeItem") if k.element_info.name == "ScrapMaster5.Article"]
+    if not kids and (group_count(win, group) or 0) > 0:
+        exp = item.child_window(auto_id="chkExpand").wrapper_object()
+        exp.click_input()
+        time.sleep(0.6)
+        kids = [k for k in item.children(control_type="TreeItem") if k.element_info.name == "ScrapMaster5.Article"]
+    return kids
+
+
+def set_check(cb, on: bool) -> None:
+    if bool(cb.get_toggle_state()) != on:
+        cb.toggle()
+        time.sleep(0.2)
+
+
+def uncheck_all_scraps(win) -> None:
+    btn = by_id(win, "btnScrapListDeSelect2") or by_id(win, "btnScrapListDeSelect")
+    if btn is not None:
+        btn.click()
+        time.sleep(0.4)
+
+
+# ---------- 저장 창 ----------
+
+def save_dialog(win, path: Path, columns: list[str], scrap_group: bool, timeout=10) -> Path:
+    import win32gui
+    import win32process
+    pid = win.element_info.process_id
+    dlg = None
+    end = time.time() + timeout
+    while time.time() < end and dlg is None:
+        hwnds = []
+        win32gui.EnumWindows(lambda h, acc: acc.append(h) if win32gui.IsWindowVisible(h) else None, hwnds)
+        for h in hwnds:
+            if (win32gui.GetWindowText(h) == "다른 이름으로 파일 저장"
+                    and win32process.GetWindowThreadProcessId(h)[1] == pid):
+                dlg = Desktop(backend="uia").window(handle=h).wrapper_object()
+                break
+        time.sleep(0.3)
+    if dlg is None:
+        raise Stop("'다른 이름으로 파일 저장' 창이 뜨지 않았습니다.")
+
+    dlg.child_window(auto_id="rbCustom", control_type="RadioButton").wrapper_object().select()
+    time.sleep(0.2)
+    wanted = set(columns)
+    for cb in dlg.descendants(control_type="CheckBox"):
+        aid = cb.element_info.automation_id
+        name = cb.window_text()
+        if aid.startswith("ckbcol"):
+            set_check(cb, name in wanted)
+        elif aid == "cbScrapGroup":
+            set_check(cb, scrap_group)
+        elif aid in ("cbStatistic", "cbSubTitle", "cbPdfTableURLLinkUse", "cbSentimentValue"):
+            set_check(cb, False)
+    edit = dlg.child_window(auto_id="1148", control_type="Edit").wrapper_object()
+    edit.set_edit_text(str(path))
+    time.sleep(0.2)
+    dlg.child_window(auto_id="1", control_type="Button").wrapper_object().click()
+
+    end = time.time() + 30
+    while time.time() < end:
+        if path.exists() and path.stat().st_size > 0:
+            time.sleep(1.0)
+            return path
+        time.sleep(0.5)
+    raise Stop(f"엑셀 파일이 만들어지지 않았습니다: {path}")
+
+
+# ---------- 단계 ----------
+
+def refresh_search(win, wait_s: int) -> list[str]:
+    need(win, "newssearchButton").click()
+    time.sleep(1.0)
+    need(win, "btnAutoSeaechRefresh").click()
+    log(f"자동검색 결과 갱신 — {wait_s}초 대기")
+    time.sleep(wait_s)
+    return read_keywords(win)
+
+
+def open_source_group(win, keyword: str) -> int:
+    tree = need(win, "treeSearchResultGroups")
+    target = None
+    for item in tree.descendants(control_type="TreeItem"):
+        if item.element_info.name != "ScrapMaster5.SearchGroup":
+            continue
+        t = texts(item)
+        if t and t[0].strip() == keyword:
+            target = item
+            break
+    if target is None:
+        raise Stop(f"검색어 그룹 '{keyword}'을 찾지 못했습니다.")
+    label = [x for x in texts(target) if x.strip() == keyword]
+    (target.child_window(title=label[0], control_type="Text").wrapper_object() if label else target).click_input()
+    time.sleep(2.0)
+    kw = by_id(win, "tbCurrentSearchResultKeywordInfo1")
+    if kw is None or kw.window_text().strip() != keyword:
+        raise Stop(f"검색결과가 '{keyword}'로 바뀌지 않았습니다.")
+    tab = need(win, "tcSearchResultTab")
+    for ti in tab.children(control_type="TabItem"):
+        if "지면기사" in texts(ti):
+            ti.select()
+            time.sleep(1.0)
+    cnt = by_id(win, "tbCurrentSearchResultCount").window_text()
+    n = int(cnt.split("/")[0].strip() or 0)
+    if n > PAGE_SIZE:
+        raise Stop(f"검색결과가 {n}건으로 한 페이지({PAGE_SIZE}건)를 넘습니다. 검색어 조건을 좁혀 주세요.")
+    return n
+
+
+def export_search(win, path: Path) -> Path:
+    result_button(win, "전체 선택")
+    result_button(win, "엑셀 저장")
+    out = save_dialog(win, path, SEARCH_COLS, scrap_group=False)
+    result_button(win, "선택 해제")
+    return out
+
+
+def export_group(win, group: str, path: Path) -> pd.DataFrame:
+    uncheck_all_scraps(win)
+    item = group_tree_item(win, group)
+    set_check(item.child_window(auto_id="cbScrapTreeGroup", control_type="CheckBox").wrapper_object(), True)
+    need(win, "btnScrapList_SaveToExcelFile_T").click()
+    save_dialog(win, path, GROUP_COLS, scrap_group=True)
+    uncheck_all_scraps(win)
+    return read_export(path)
+
+
+def scrap_rows(win, seqs: list[int]) -> None:
+    r = need(win, "tcSearchResultTab").rectangle()
+    result_button(win, "선택 해제")
+    click_rel(r, TITLE_DX, FIRST_ROW_DY)
+    current = 1
+    for n in sorted(seqs):
+        if n - current:
+            keyboard.send_keys("{DOWN %d}" % (n - current))
+            time.sleep(0.15)
+        keyboard.send_keys("{SPACE}")
+        time.sleep(0.15)
+        current = n
+    result_button(win, "스크랩")
+    time.sleep(1.5)
+    no_popup_or_stop(win, "[스크랩]")
+
+
+def reorder(win, group: str, current: list[str], desired: list[str]) -> None:
+    """current: 지금 순서의 Serial 키 목록. desired: 원하는 순서. 뒤에서부터 [맨 위로]."""
+    order = list(current)
+    top = need(win, "btnScrapListSelectedTop")
+    uncheck_all_scraps(win)
+    for key in reversed(desired):
+        idx = order.index(key)
+        arts = articles_of(win, group)
+        if len(arts) != len(order):
+            raise Stop("정렬 중 그룹 기사 수가 바뀌었습니다. 멈춥니다.")
+        cb = arts[idx].children(control_type="CheckBox")[0]
+        set_check(cb, True)
+        top.click()
+        time.sleep(0.4)
+        order.insert(0, order.pop(idx))
+        uncheck_all_scraps(win)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--date", help="대상 일자(기본 오늘)")
+    ap.add_argument("--group", help="검토 그룹 이름(기본 자동검토_MMDD)")
+    ap.add_argument("--source", default="삼성 반도체", help="후보로 쓸 검색어 그룹 이름")
+    ap.add_argument("--until", choices=["export", "scrap", "order"], default="order")
+    ap.add_argument("--config", default=str(HERE / "config.yaml"))
+    ap.add_argument("--issues", default=str(HERE / "issues.yaml"))
+    ap.add_argument("--today", default=None)
+    ap.add_argument("--refresh-wait", type=int, default=20)
+    ap.add_argument("--no-refresh", action="store_true", help="결과 갱신을 건너뜀")
+    args = ap.parse_args()
+
+    target = date.fromisoformat(args.date) if args.date else date.today()
+    group = args.group or f"자동검토_{target:%m%d}"
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = OUT / "runs" / stamp
+    run_dir.mkdir(parents=True, exist_ok=True)
+    extras = [p for p in (args.issues, args.today) if p and Path(p).exists()]
+    cfg = load_config(args.config, extras)
+    ledger = Ledger(OUT / "ledger.sqlite")
+
+    win = main_window()
+    win.set_focus()
+    try:
+        # 1) 갱신
+        if not args.no_refresh:
+            kw_lines = refresh_search(win, args.refresh_wait)
+        else:
+            need(win, "newssearchButton").click()
+            time.sleep(1.0)
+            kw_lines = read_keywords(win)
+        (run_dir / "keywords.txt").write_text("\n".join(kw_lines), encoding="utf-8")
+        log(f"검색어 {len(kw_lines)}개 건수 기록")
+
+        # 2) 후보 내보내기
+        n = open_source_group(win, args.source)
+        log(f"후보 그룹 '{args.source}' 지면 {n}건 — 엑셀 저장")
+        src = export_search(win, run_dir / f"검색결과_{stamp}.xlsx")
+        df = read_export(src)
+        if len(df) != n:
+            raise Stop(f"엑셀 행 수({len(df)})와 화면 건수({n})가 다릅니다.")
+        if df["seq"].isna().any():
+            raise Stop("엑셀에 '연번'이 없습니다. 저장 항목을 확인해 주세요.")
+
+        # 3) 엔진
+        res = build_draft(df, cfg, target)
+        run_id = ledger.start_run(target, str(src), file_sha256(src), cfg.sha256, len(df))
+        new = ledger.record_candidates(run_id, target, res.selected)
+        res.selected["new"] = res.selected["key"].map(lambda k: "신규" if k in new else "")
+        report = write_report(run_dir / f"검토초안_{target}_run{run_id}.xlsx", res, {
+            "대상 일자": target.isoformat(), "실행 번호": run_id, "후보 그룹": args.source, "검토 그룹": group,
+            "입력 기사 수": len(df), "추천": len(res.selected), "전체 상태": res.overall,
+        })
+        log(f"추천 {len(res.selected)}건 / 참고 {len(res.reference)} / 제외·중복 {len(res.removed)} — {report.name}")
+        log(f"신문별 상태: {res.overall}")
+        if args.until == "export":
+            ledger.finish_run(run_id, res.overall, len(res.selected), res.paper_status)
+            log("내보내기 단계까지 완료(스크랩 안 함).")
+            return 0
+
+        # 4) 검토 그룹 준비, 이미 담긴 기사 확인
+        ensure_group(win, group)
+        select_group(win, group)
+        n_before = group_count(win, group) or 0
+        existing = export_group(win, group, run_dir / f"검토그룹_전_{stamp}.xlsx") if n_before else pd.DataFrame(columns=["key"])
+        have = set(existing["key"]) if not existing.empty else set()
+        todo = res.selected[~res.selected["key"].isin(have)]
+        log(f"검토 그룹 기존 {n_before}건, 새로 담을 {len(todo)}건")
+
+        if len(todo):
+            select_group(win, group)
+            scrap_rows(win, [int(float(s)) for s in todo["seq"]])
+            n_after = group_count(win, group) or 0
+            if n_after - n_before != len(todo):
+                raise Stop(f"그룹 건수 증가 {n_after - n_before}건 ≠ 기대 {len(todo)}건. 화면을 확인해 주세요.")
+
+        # 5) 검증
+        after = export_group(win, group, run_dir / f"검토그룹_후_{stamp}.xlsx")
+        missing = set(res.selected["key"]) - set(after["key"])
+        mine = set(ledger_keys(ledger, target))
+        extra = [k for k in after["key"] if k not in mine]
+        if missing:
+            raise Stop(f"추천했는데 그룹에 없는 기사 {len(missing)}건: {sorted(missing)[:10]}")
+        log(f"Serial 검증 통과(그룹 {len(after)}건)")
+        if args.until == "scrap":
+            ledger.finish_run(run_id, res.overall, len(res.selected), res.paper_status)
+            return 0
+
+        # 6) 정렬 — 사람이 넣은 기사가 있으면 정렬하지 않음
+        if extra:
+            log(f"자동 추천 외 기사 {len(extra)}건이 있어 정렬하지 않습니다(수동 작업 보존).")
+        else:
+            desired = list(res.selected["key"])
+            reorder(win, group, list(after["key"]), desired)
+            final = export_group(win, group, run_dir / f"검토그룹_정렬후_{stamp}.xlsx")
+            if list(final["key"])[: len(desired)] != desired:
+                raise Stop("정렬 후 순서가 추천안과 다릅니다. 화면을 확인해 주세요.")
+            log("정렬 검증 통과")
+        ledger.finish_run(run_id, res.overall, len(res.selected), res.paper_status)
+        log(f"완료 — 검토 그룹 '{group}', 상태: {res.overall}")
+        return 0 if res.overall == "완료" else 2
+    except Stop as e:
+        log(f"멈춤: {e}")
+        log(f"이번 실행 파일: {run_dir}")
+        return 3
+
+
+def ledger_keys(ledger: Ledger, target: date) -> list[str]:
+    return [k for k, *_ in ledger.recommended(target)]
+
+
+if __name__ == "__main__":
+    sys.exit(main())

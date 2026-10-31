@@ -66,6 +66,18 @@ class ScrapDraftTest(unittest.TestCase):
         self.assertEqual(df.iloc[0]["key"], "S:1001")
         self.assertEqual(df.iloc[0]["page_no"], 1)
 
+    def test_read_group_export_with_group_row(self):
+        """스크랩 목록 [엑셀로 내보내기] 형식: 헤더 다음 줄에 그룹 이름만 있는 줄이 온다."""
+        p = self.tmp / "group.xlsx"
+        pd.DataFrame([["연번", "기사 제목", "매체명", "지면번호", "기자", "발행일", "검색어", "기사 시리얼"],
+                      ["자동검토_테스트", None, None, None, None, None, None, None],
+                      [1, "시험 기사 하나", "한국일보", "A15면", "기자A", D, "가나", "20261031hk00a15002"],
+                      [2, "시험 기사 둘", "한국경제", "A02면", None, D, "반도체", "20261031ha00a02003"]]
+                     ).to_excel(p, header=False, index=False)
+        df = read_export(p)
+        self.assertEqual(list(df["key"]), ["S:20261031hk00a15002", "S:20261031ha00a02003"])
+        self.assertEqual(list(df["page_no"]), [15, 2])
+
     def test_draft_rules(self):
         res = build_draft(read_export(self.xlsx), self.cfg(), date(2026, 11, 2), now=datetime(2026, 11, 2, 8, 0))
         sel = res.selected.set_index("key")
