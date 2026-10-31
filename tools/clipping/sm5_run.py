@@ -33,10 +33,13 @@ from scrapdraft.engine import build_draft
 from scrapdraft.excel_io import file_sha256, read_export
 from scrapdraft.ledger import Ledger
 from scrapdraft.report import write_report
-from sm5_read import OUT, WINDOW_TITLE, by_id, expand_search_folders, read_keywords, read_popups, texts
+from pywinauto.findwindows import ElementAmbiguousError
+
+from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, read_popups, texts
+from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31m"
+VERSION = "2026-10-31n"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -64,6 +67,43 @@ def log(msg: str) -> None:
 
 
 # ---------- 화면 요소 ----------
+
+def _process_windows(win) -> list:
+    """본 창과, 같은 프로세스의 다른 보이는 창(그룹 관리 창 등)."""
+    import win32gui
+    import win32process
+    pid = win.element_info.process_id
+    out = [win.wrapper_object()]
+    hwnds = []
+    win32gui.EnumWindows(lambda h, acc: acc.append(h) if win32gui.IsWindowVisible(h) else None, hwnds)
+    for h in hwnds:
+        if h != win.handle and win32process.GetWindowThreadProcessId(h)[1] == pid:
+            try:
+                out.append(Desktop(backend="uia").window(handle=h).wrapper_object())
+            except Exception:
+                pass
+    return out
+
+
+def by_id(win, auto_id: str):
+    """auto_id로 요소 찾기. 같은 이름이 여럿이면 화면에 보이는 것을 고른다(다른 창에 있는 것 포함)."""
+    try:
+        return _by_id(win, auto_id)
+    except ElementAmbiguousError:
+        pass
+    cands = []
+    for root in _process_windows(win):
+        for e in root.descendants():
+            if e.element_info.automation_id == auto_id:
+                cands.append(e)
+    visible = []
+    for e in cands:
+        try:
+            if e.is_visible() and e.rectangle().width() > 0:
+                visible.append(e)
+        except Exception:
+            continue
+    return (visible or cands or [None])[-1]   # 나중에 뜬(위에 있는) 창의 것이 보통 마지막
 
 def main_window():
     """'스크랩마스터 5' 제목 창 중 가장 큰 창을 핸들로 고정(같은 제목의 알림 창과 헷갈리지 않게)."""
