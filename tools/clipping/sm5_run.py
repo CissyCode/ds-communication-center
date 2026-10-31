@@ -36,7 +36,7 @@ from scrapdraft.report import write_report
 from sm5_read import OUT, WINDOW_TITLE, by_id, expand_search_folders, read_keywords, read_popups, texts
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31i"
+VERSION = "2026-10-31j"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -290,11 +290,18 @@ def dismiss_notices(win) -> None:
             continue
         try:
             dlg = Desktop(backend="uia").window(handle=h).wrapper_object()
-            buttons = {b.window_text(): b for b in dlg.descendants(control_type="Button")}
+            buttons = {}
+            for b in dlg.descendants(control_type="Button"):
+                try:
+                    if b.is_visible() and b.window_text():
+                        buttons[b.window_text()] = b
+                except Exception:
+                    continue
             msg = " / ".join(t.window_text() for t in dlg.descendants(control_type="Text") if t.window_text())
         except Exception:
             continue
-        for name in NOTICE_BUTTONS:
+        order = NOTICE_BUTTONS if ("열" in msg and "?" in msg) else ["확인", "OK", "닫기"] + NOTICE_BUTTONS
+        for name in order:
             if name in buttons:
                 log(f"알림 창 '{title}': {msg[:120]} → [{name}]")
                 press(buttons[name])
