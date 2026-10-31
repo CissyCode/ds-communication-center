@@ -36,7 +36,7 @@ from scrapdraft.report import write_report
 from sm5_read import OUT, by_id, expand_search_folders, main_window, read_keywords, read_popups, texts
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31g"
+VERSION = "2026-10-31h"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -223,16 +223,28 @@ def save_dialog(win, path: Path, columns: list[str], timeout=10) -> Path:
             time.sleep(0.2)
     except Exception:
         pass
+    time.sleep(1.0)  # 창이 뜬 직후 프로그램이 체크 상태를 다시 채우므로 잠시 기다린 뒤 바꾼다
     wanted = set(columns)
-    found = set()
-    for cb in dlg.descendants(control_type="CheckBox"):
-        name = cb.window_text()
-        if cb.element_info.automation_id.startswith("ckbcol") and name in wanted:
-            found.add(name)
-            set_check(cb, True)   # 켜기만 한다
-    missing = wanted - found
+    boxes = {cb.window_text(): cb for cb in dlg.descendants(control_type="CheckBox")
+             if cb.element_info.automation_id.startswith("ckbcol")}
+    missing = wanted - set(boxes)
     if missing & set(REQUIRED_COLS):
         raise Stop(f"저장 창에 필요한 항목이 없습니다: {sorted(missing)}")
+    failed = []
+    for name in sorted(wanted & set(boxes)):
+        cb = boxes[name]
+        if cb.get_toggle_state() == 1:
+            continue                      # 이미 켜져 있으면 그대로(끄지 않음)
+        cb.click_input()                  # 화면 클릭(프로그램이 클릭 이벤트로 상태를 읽음)
+        time.sleep(0.3)
+        if cb.get_toggle_state() != 1:
+            cb.toggle()
+            time.sleep(0.3)
+        if cb.get_toggle_state() != 1:
+            failed.append(name)
+    if set(failed) & set(REQUIRED_COLS):
+        raise Stop(f"저장 항목을 켜지 못했습니다: {failed}. 저장 창에서 직접 체크한 뒤 다시 실행해 주세요.")
+    log("저장 항목: " + ", ".join(n for n, cb in boxes.items() if cb.get_toggle_state() == 1))
     edit = find(dlg, auto_id="1148", control_type="Edit")
     edit.set_edit_text(str(path))
     time.sleep(0.2)
@@ -433,6 +445,9 @@ def main() -> int:
                 continue
             src = export_search(win, run_dir / f"검색결과{i}_{stamp}.xlsx", args.keep_options)
             part = read_export(src)
+            cols = set(part.attrs.get("has_columns", []))
+            if not {"seq", "serial"} <= cols:
+                raise Stop(f"저장된 엑셀에 연번·기사 시리얼이 없습니다(있는 항목: {sorted(cols)}). 저장 항목 체크가 반영되지 않았습니다.")
             if len(part) != n:
                 raise Stop(f"'{spec}' 엑셀 행 수({len(part)})와 화면 건수({n})가 다릅니다.")
             if part["seq"].isna().any():
