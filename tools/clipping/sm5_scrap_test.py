@@ -54,6 +54,13 @@ def selected_group(win) -> str | None:
     return None
 
 
+def group_count(name: str | None) -> int | None:
+    """'자동검토_테스트[2]' → 2"""
+    import re
+    m = re.search(r"\[(\d+)\]\s*$", name or "")
+    return int(m.group(1)) if m else None
+
+
 def scrap_serials(win) -> list[dict]:
     grid = by_id(win, "scraplistDataGrid")
     if grid is None or grid.rectangle().width() == 0:
@@ -110,7 +117,8 @@ def main() -> int:
         sys.exit(f"선택된 그룹이 '{args.group}'이 아닙니다. 시험용 그룹 탭을 먼저 선택해 주세요.")
 
     before = scrap_serials(win)
-    print(f"담기 전 그룹 기사 수: {len(before)}")
+    n_before = group_count(group)
+    print(f"담기 전 그룹 기사 수: {n_before} (목록에서 읽은 행 {len(before)})")
 
     r = tab.rectangle()
     print("미리보기 — 마우스만 움직입니다." if not args.go else "실행 — 마우스를 건드리지 마세요.")
@@ -142,13 +150,17 @@ def main() -> int:
         return 3
 
     after = scrap_serials(win)
+    n_after = group_count(selected_group(win))
     key = "Serial"
     old = {x.get(key) for x in before}
     added = [x for x in after if x.get(key) not in old]
-    print(f"담은 뒤 그룹 기사 수: {len(after)} (추가 {len(added)}건, 기대 {len(rows)}건)")
+    delta = (n_after - n_before) if (n_after is not None and n_before is not None) else None
+    print(f"담은 뒤 그룹 기사 수: {n_after} (그룹 건수 증가 {delta}건, 기대 {len(rows)}건)")
     for x in added:
         print(f"  + {x.get('매체명', '')} {x.get('지면', '')} {x.get('기사 제목', '')} [Serial {x.get(key, '')}]")
-    ok = len(added) == len(rows)
+    if not added:
+        print("  (기사별 Serial은 아직 화면에서 읽지 못함 — 건수로만 검증)")
+    ok = delta == len(rows)
     print("결과: 일치" if ok else "결과: 불일치 — 화면을 확인해 주세요.")
 
     OUT.mkdir(exist_ok=True)
