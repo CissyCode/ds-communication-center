@@ -139,19 +139,34 @@ def read_big(win, min_children: int = 8) -> list[str]:
     return lines
 
 
+def _dump_dialog(w, lines):
+    ei = w.element_info
+    lines.append(f"## {ei.control_type}\t{w.window_text()!r}\t{ei.automation_id!r}\t{ei.class_name!r}")
+    for c in w.descendants():
+        ce = c.element_info
+        if ce.control_type in ("MenuItem", "Button", "ListItem", "CheckBox", "RadioButton", "Text", "Edit", "ComboBox"):
+            lines.append(f"  {ce.control_type}\t{ce.name!r}\t{ce.automation_id!r}")
+
+
 def read_popups(win) -> list[str]:
-    """메인 창 밖에 뜨는 스크랩마스터 창(오른쪽 클릭 메뉴·대화상자)의 항목을 읽는다."""
+    """메인 창 밖·안에 뜬 스크랩마스터 대화상자(저장 창, 메뉴 등)의 항목을 읽는다."""
+    import win32gui
+    import win32process
     pid = win.element_info.process_id
     lines = []
-    for w in Desktop(backend="uia").windows(process=pid):
-        if w.handle == win.handle:
+    # 1) 같은 프로세스의 보이는 최상위 창(Win32로 열거 — 소유된 대화상자 포함)
+    hwnds = []
+    win32gui.EnumWindows(lambda h, acc: acc.append(h) if win32gui.IsWindowVisible(h) else None, hwnds)
+    for h in hwnds:
+        if h == win.handle or win32process.GetWindowThreadProcessId(h)[1] != pid:
             continue
-        ei = w.element_info
-        lines.append(f"## {ei.control_type}\t{w.window_text()!r}\t{ei.automation_id!r}\t{ei.class_name!r}")
-        for c in w.descendants():
-            ce = c.element_info
-            if ce.control_type in ("MenuItem", "Button", "ListItem", "CheckBox", "RadioButton", "Text", "Edit"):
-                lines.append(f"  {ce.control_type}\t{ce.name!r}\t{ce.automation_id!r}")
+        try:
+            _dump_dialog(Desktop(backend="uia").window(handle=h).wrapper_object(), lines)
+        except Exception as e:
+            lines.append(f"## 창 {h} 읽기 실패: {e}")
+    # 2) 메인 창 안에 붙은 창(WPF 모달 창이 자식으로 보이는 경우)
+    for w in win.descendants(control_type="Window"):
+        _dump_dialog(w, lines)
     return lines or ["팝업 창이 없습니다. 대기 시간 안에 스크랩마스터에서 오른쪽 클릭 메뉴를 열어 두세요."]
 
 
