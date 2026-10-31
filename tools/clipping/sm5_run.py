@@ -36,7 +36,7 @@ from scrapdraft.report import write_report
 from sm5_read import OUT, by_id, expand_search_folders, main_window, read_keywords, read_popups, texts
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31e"
+VERSION = "2026-10-31f"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -60,6 +60,15 @@ def log(msg: str) -> None:
 
 
 # ---------- 화면 요소 ----------
+
+def press(btn) -> None:
+    """버튼 누르기. 자동화 '누르기' 신호(Invoke)를 받지 않는 버튼은 화면 위치를 마우스로 클릭."""
+    try:
+        btn.invoke()
+    except Exception:
+        btn.click_input()
+    time.sleep(0.3)
+
 
 def find(elem, auto_id: str | None = None, title: str | None = None, control_type: str | None = None):
     """요소(wrapper) 안에서 하위 요소 찾기. 창이 아닌 요소에는 child_window가 없어서 직접 훑는다."""
@@ -137,14 +146,14 @@ def ensure_group(win, group: str) -> None:
     if group_count(win, group) is not None:
         return
     log(f"스크랩 그룹 '{group}' 만들기")
-    need(win, "buttonScrapGroupAdd").click()
+    press(need(win, "buttonScrapGroupAdd"))
     time.sleep(0.8)
     box = by_id(win, "tbNewScrapGroup")
     add = by_id(win, "btnAddScrapGroup")
     if box is None or add is None:
         raise Stop(f"그룹 추가 창을 찾지 못했습니다. '{group}' 그룹을 직접 만든 뒤 다시 실행해 주세요.")
     box.set_edit_text(group)
-    add.click()
+    press(add)
     time.sleep(0.8)
     keyboard.send_keys("{ESC}")
     time.sleep(0.5)
@@ -183,7 +192,7 @@ def set_check(cb, on: bool) -> None:
 def uncheck_all_scraps(win) -> None:
     btn = by_id(win, "btnScrapListDeSelect2") or by_id(win, "btnScrapListDeSelect")
     if btn is not None:
-        btn.click()
+        press(btn)
         time.sleep(0.4)
 
 
@@ -241,9 +250,9 @@ def save_dialog(win, path: Path, columns: list[str], timeout=10) -> Path:
 # ---------- 단계 ----------
 
 def refresh_search(win, wait_s: int) -> list[str]:
-    need(win, "newssearchButton").click()
+    press(need(win, "newssearchButton"))
     time.sleep(1.0)
-    need(win, "btnAutoSeaechRefresh").click()
+    press(need(win, "btnAutoSeaechRefresh"))
     log(f"자동검색 결과 갱신 — {wait_s}초 대기")
     time.sleep(wait_s)
     return read_keywords(win)
@@ -298,7 +307,7 @@ def export_group(win, group: str, path: Path) -> pd.DataFrame:
     uncheck_all_scraps(win)
     item = group_tree_item(win, group)
     set_check(find(item, auto_id="cbScrapTreeGroup", control_type="CheckBox"), True)
-    need(win, "btnScrapList_SaveToExcelFile_T").click()
+    press(need(win, "btnScrapList_SaveToExcelFile_T"))
     save_dialog(win, path, REQUIRED_COLS)
     uncheck_all_scraps(win)
     return read_export(path)
@@ -333,7 +342,7 @@ def reorder(win, group: str, current: list[str], desired: list[str]) -> None:
             raise Stop("정렬 중 그룹 기사 수가 바뀌었습니다. 멈춥니다.")
         cb = arts[idx].children(control_type="CheckBox")[0]
         set_check(cb, True)
-        top.click()
+        press(top)
         time.sleep(0.4)
         order.insert(0, order.pop(idx))
         uncheck_all_scraps(win)
@@ -372,7 +381,7 @@ def main() -> int:
         if not args.no_refresh:
             kw_lines = refresh_search(win, args.refresh_wait)
         else:
-            need(win, "newssearchButton").click()
+            press(need(win, "newssearchButton"))
             time.sleep(1.0)
             kw_lines = read_keywords(win)
         (run_dir / "keywords.txt").write_text("\n".join(kw_lines), encoding="utf-8")
