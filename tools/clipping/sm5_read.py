@@ -5,6 +5,7 @@
   python sm5_read.py scraplist         현재 스크랩 목록 행(제목·매체·날짜·지면·Serial 등)
   python sm5_read.py results           현재 표시 중인 검색결과 영역 구조(행 읽기 방식 확인용)
   python sm5_read.py grids             화면의 표·목록(DataGrid/List/Tree/Table)과 행 수, 첫 행 내용
+  python sm5_read.py big               종류와 관계없이 자식 요소가 많은 영역(기사 목록 후보) 찾기
   python sm5_read.py dump <automation_id> [--depth N]   특정 영역 하위 구조 출력
 
 결과는 화면 출력과 함께 output\\sm5_<명령>.txt 로 저장한다.
@@ -116,6 +117,26 @@ def read_grids(win) -> list[str]:
     return lines
 
 
+def read_big(win, min_children: int = 8) -> list[str]:
+    """기사 목록이 표준 표가 아닐 때(서드파티 그리드 등) 자식이 많은 요소를 찾는다."""
+    lines = []
+    for e in win.descendants():
+        try:
+            kids = e.children()
+        except Exception:
+            continue
+        if len(kids) < min_children:
+            continue
+        ei = e.element_info
+        kinds = {}
+        for k in kids:
+            t = k.element_info.control_type
+            kinds[t] = kinds.get(t, 0) + 1
+        sample = " | ".join(texts(kids[0])[:6]) or kids[0].window_text()
+        lines.append(f"{ei.control_type}\t{ei.automation_id!r}\t{ei.class_name!r}\t자식 {len(kids)} {kinds}\t첫 자식: {sample[:150]}")
+    return lines
+
+
 def dump(elem, depth: int, indent: int = 0, lines=None) -> list[str]:
     lines = [] if lines is None else lines
     ei = elem.element_info
@@ -128,7 +149,7 @@ def dump(elem, depth: int, indent: int = 0, lines=None) -> list[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["keywords", "groups", "scraplist", "results", "grids", "dump"])
+    ap.add_argument("cmd", choices=["keywords", "groups", "scraplist", "results", "grids", "big", "dump"])
     ap.add_argument("auto_id", nargs="?")
     ap.add_argument("--depth", type=int, default=6)
     args = ap.parse_args()
@@ -142,6 +163,8 @@ def main() -> int:
         lines = read_scraplist(win)
     elif args.cmd == "grids":
         lines = read_grids(win)
+    elif args.cmd == "big":
+        lines = read_big(win)
     else:
         auto_id = "tcSearchResultTab" if args.cmd == "results" else args.auto_id
         if not auto_id:
