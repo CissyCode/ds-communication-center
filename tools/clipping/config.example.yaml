@@ -1,63 +1,52 @@
-# 조간 스크랩 규칙 (상시 기준). 이 파일은 담당자 승인으로만 바꿉니다.
-# 복사해서 config.yaml 로 저장한 뒤 실제 값으로 채우세요.
+# 조간 지면 스크랩 규칙 — 상시 기준 (일반 예시 템플릿)
+# 실제 팀 설정은 저장소에 올리지 않고 사내 PC의 config.yaml에만 둡니다.
+# 현안은 issues.yaml(만료일 필수), 그날만 쓰는 지시는 today.yaml 로 따로 둡니다.
 
-# 대상 신문 (본판 이름 기준. '조선일보(가판)'은 '조선일보'로 매칭됩니다)
-target_papers:
-  - 신문A
-  - 신문B
-  - 경제지A
-  - 경제지B
-
-# 매체 우선순위 (스크랩마스터 '사용자 매체 우선순위'와 같게 맞추는 것을 권장)
-media_priority:
-  - 신문A
-  - 경제지A
-  - 신문B
-  - 경제지B
-
-# 소제목(분류). 위에서부터 먼저 맞는 것으로 분류되고, 이 순서대로 배열됩니다.
-# weight는 선정 점수. 제목·부제목에 키워드가 있으면 weight 전체, 검색어로만 잡혔으면 절반.
+papers:
+  weekday:
+    - {name: 전자신문, ready: "05:00"}
+    - {name: 매일경제, ready: "06:00"}
+    - {name: 한국경제, ready: "06:00"}
+    - {name: 서울경제, ready: "06:00"}
+    - {name: 경향신문, ready: "06:30"}
+    - {name: 세계일보, ready: "07:00"}
+    - {name: 동아일보}
+  weekend:
+    - {name: 매일경제, ready: "06:00"}
+    - {name: 동아일보}
+restrict_media: false
+media_priority: [매일경제, 한국경제, 서울경제, 전자신문, 헤럴드경제, 경향신문, 문화일보]
 sections:
-  - name: 당사
-    keywords: [회사명, 브랜드명, 대표이사명]
+  - name: 핵심
     weight: 100
-  - name: 업계
-    keywords: [반도체, 메모리, 파운드리]
+    keywords: [우리회사 반도체, 우리회사 HBM, 반도체, 경쟁사A, HBM, 메모리]
+    subtopics:
+      - {name: 보도자료, keywords: []}
+      - {name: 현안, keywords: []}
+      - {name: 지역, keywords: [평택]}
+      - {name: 반도체 업계, keywords: [경쟁사A, HBM, 메모리]}
+      - {name: 기타, keywords: []}
+  - name: 관계사
+    weight: 70
+    keywords: [우리회사, 계열사A]
+    subtopics:
+      - {name: 전사, keywords: [노조]}
+      - {name: 금융, keywords: [계열사A]}
+      - {name: 기타, keywords: []}
+  - name: 기타
+    weight: 45
+    keywords: [정부, 경제]
+    subtopics:
+      - {name: 정부, keywords: [정부]}
+      - {name: 경제, keywords: [경제]}
+      - {name: 사회/국제, keywords: []}
+  - name: 칼럼/사설
     weight: 60
-  - name: 경쟁사
-    keywords: [경쟁사A, 경쟁사B]
-    weight: 50
-  - name: 정책·거시
-    keywords: [산업부, 수출, 금리]
-    weight: 40
+    opinion: true
+    preferred_media: [매일경제, 한국경제, 서울경제]
+    other_media_factor: 0.8
 default_section: 기타
 default_weight: 20
-
-# 제목에 있으면 삭제하지 않고 '제외 후보' 시트로 보냄
-exclude_keywords: [부고, 인사, 전면광고]
-
-scoring:
-  min_score: 40            # 이 점수 이상만 추천목록, 나머지는 '참고' 시트
-  front_page_bonus: 30     # 1면
-  early_page_bonus: 10     # 2~early_page_until면
-  early_page_until: 5
-  size_bonus_per_100cm2: 2 # 기사 크기 100cm²당
-
-dedup:
-  edition_markers: [가판, 초판]   # 매체명에 이 표시가 있으면 가판으로 봄
-  edition_similarity: 0.6         # 같은 신문 가판·본판 제목 유사도 기준
-  cluster_similarity: 0.5         # 다른 매체 유사 보도 묶음 표시 기준(삭제하지 않음)
-
-# 휴간일: 날짜별 휴간 신문
-holidays: {}
-#  "2026-12-25": [신문A]
-
-# 현안(일시 우선순위). 만료일(until) 필수, 지나면 자동 비활성화.
-# 자주 바뀌면 issues.yaml로 따로 두고 --issues issues.yaml 로 지정해도 됩니다.
-issues:
-  - name: 예시 현안
-    keywords: [현안키워드]
-    until: 2026-11-15
-    boost: 50
-    pin_top: true     # 소속 소제목 안에서 맨 위
-    # section: 현안   # 지정하면 별도 소제목을 맨 앞에 만듭니다
+exclude_page_prefixes: [B, C]
+exclude_keywords: [부고]
+scoring: {min_score: 40, front_page_bonus: 30, early_page_bonus: 10, early_page_until: 5, size_bonus_per_100cm2: 2}

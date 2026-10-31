@@ -1,0 +1,11 @@
+# 현안(일시 우선순위). until(만료일) 필수 — 지나면 자동으로 꺼집니다.
+# bundle: true 이면 같은 현안 기사(사설·칼럼 포함)를 대표 1건 뒤에 관련기사로 묶고 목차에는 대표만 표시합니다.
+# 사용: python -m scrapdraft --issues issues.yaml recommend 검색결과.xlsx
+issues:
+  - name: 예시 현안
+    keywords: [현안 키워드]
+    until: 2026-11-30
+    boost: 60
+    section: 핵심
+    subtopic: 현안
+    bundle: true

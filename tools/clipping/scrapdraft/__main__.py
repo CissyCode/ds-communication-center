@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -26,7 +26,7 @@ def _out(args) -> Path:
 
 
 def cmd_recommend(args) -> int:
-    cfg = load_config(args.config, args.issues)
+    cfg = load_config(args.config, [args.issues, args.today])
     target = date.fromisoformat(args.date) if args.date else date.today()
     src = Path(args.input)
     df = read_export(src)
@@ -39,7 +39,8 @@ def cmd_recommend(args) -> int:
     if missing:
         print(f"[주의] 엑셀에 없는 항목: {', '.join(sorted(missing))} — 엑셀 저장 옵션에서 체크해 주세요.")
 
-    res = build_draft(df, cfg, target, confirmed_empty=args.confirmed_empty or [])
+    now = datetime.combine(target, datetime.strptime(args.now, "%H:%M").time()) if args.now else None
+    res = build_draft(df, cfg, target, confirmed_empty=args.confirmed_empty or [], now=now)
     ledger.step(run_id, "선정·배열 완료")
     new = ledger.record_candidates(run_id, target, res.selected)
     res.selected["new"] = res.selected["key"].map(lambda k: "신규" if k in new else "")
@@ -110,6 +111,7 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="scrapdraft", description="스크랩마스터 조간 스크랩 검토 초안 도구")
     p.add_argument("--config", default=str(here / "config.yaml"))
     p.add_argument("--issues", default=None, help="현안 규칙 파일(선택, 만료일 필수)")
+    p.add_argument("--today", default=None, help="당일 지시 파일(선택, 예: 오늘 보도자료 키워드)")
     p.add_argument("--out", default=str(here / "output"))
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -117,6 +119,7 @@ def main(argv=None) -> int:
     r.add_argument("input")
     r.add_argument("--date")
     r.add_argument("--confirmed-empty", nargs="*", help="뉴스 탭에서 수집은 확인했지만 해당 기사가 없는 신문")
+    r.add_argument("--now", help="상태 판정 기준 시각(HH:MM, 기본은 현재 시각)")
     r.set_defaults(fn=cmd_recommend)
 
     d = sub.add_parser("diff", help="확정 목차 엑셀과 추천안 비교")

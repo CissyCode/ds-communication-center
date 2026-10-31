@@ -6,9 +6,9 @@ from pathlib import Path
 import pandas as pd
 
 COLS = {
-    "rank": "추천순번", "section": "소제목", "media": "매체", "page_raw": "면", "date": "발행일",
+    "rank": "추천순번", "section": "소제목", "subtopic": "소주제", "media": "매체", "page_raw": "면", "date": "발행일",
     "title": "기사 제목", "subtitle": "부제목", "score": "점수", "reason": "선정 사유",
-    "cluster": "유사 보도 묶음", "new": "이번 실행 신규", "note": "확인 메모", "keyword": "검색어", "key": "기사 키",
+    "cluster": "관련기사 묶음", "toc": "목차 표시", "new": "이번 실행 신규", "note": "확인 메모", "keyword": "검색어", "key": "기사 키",
 }
 
 
@@ -25,8 +25,8 @@ def write_report(path: str | Path, res, run_info: dict) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     sel = res.selected.copy()
     sheets = {
-        "추천목록": _view(sel, ["rank", "section", "media", "page_raw", "date", "title", "subtitle", "score", "reason", "cluster", "new", "note", "keyword", "key"]),
-        "참고(기준미달·확인필요)": _view(res.reference, ["section", "media", "page_raw", "date", "title", "score", "reason", "note", "keyword", "key"]),
+        "추천목록": _view(sel, ["rank", "section", "subtopic", "media", "page_raw", "date", "title", "subtitle", "score", "reason", "cluster", "toc", "new", "note", "keyword", "key"]),
+        "참고(기준미달·확인필요)": _view(res.reference, ["section", "subtopic", "media", "page_raw", "date", "title", "score", "reason", "note", "keyword", "key"]),
         "제외·중복": _view(res.removed.assign(note=res.removed["drop_reason"] + " " + res.removed["note"]),
                         ["media", "page_raw", "date", "title", "note", "keyword", "key"]),
         "신문별 상태": res.paper_status,

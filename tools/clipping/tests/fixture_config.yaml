@@ -1,0 +1,49 @@
+# 테스트 전용 규칙(가상 회사명·가상 시각)
+papers:
+  weekday:
+    - {name: 전자신문, ready: "05:00"}
+    - {name: 매일경제, ready: "06:00"}
+    - {name: 한국경제, ready: "06:00"}
+    - {name: 서울경제, ready: "06:00"}
+    - {name: 경향신문, ready: "06:30"}
+    - {name: 세계일보, ready: "07:00"}
+    - {name: 동아일보}
+  weekend:
+    - {name: 매일경제, ready: "06:00"}
+    - {name: 동아일보}
+restrict_media: false
+media_priority: [매일경제, 한국경제, 서울경제, 전자신문, 헤럴드경제, 경향신문, 문화일보]
+sections:
+  - name: 핵심
+    weight: 100
+    keywords: [가나전자 반도체, 가나전자 HBM, 반도체, 다라반도체, HBM, 메모리]
+    subtopics:
+      - {name: 보도자료, keywords: []}
+      - {name: 현안, keywords: []}
+      - {name: 지역, keywords: [평택]}
+      - {name: 반도체 업계, keywords: [다라반도체, HBM, 메모리]}
+      - {name: 기타, keywords: []}
+  - name: 관계사
+    weight: 70
+    keywords: [가나전자, 가나생명]
+    subtopics:
+      - {name: 전사, keywords: [노조]}
+      - {name: 금융, keywords: [가나생명]}
+      - {name: 기타, keywords: []}
+  - name: 기타
+    weight: 45
+    keywords: [정부, 경제]
+    subtopics:
+      - {name: 정부, keywords: [정부]}
+      - {name: 경제, keywords: [경제]}
+      - {name: 사회/국제, keywords: []}
+  - name: 칼럼/사설
+    weight: 60
+    opinion: true
+    preferred_media: [매일경제, 한국경제, 서울경제]
+    other_media_factor: 0.8
+default_section: 기타
+default_weight: 20
+exclude_page_prefixes: [B, C]
+exclude_keywords: [부고]
+scoring: {min_score: 40, front_page_bonus: 30, early_page_bonus: 10, early_page_until: 5, size_bonus_per_100cm2: 2}

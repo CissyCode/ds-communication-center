@@ -1,0 +1,9 @@
+# 당일 지시(그날만). 오늘 날짜를 until에 넣으세요.
+# 사용: python -m scrapdraft --today today.yaml recommend 검색결과.xlsx
+issues:
+  - name: 오늘 DS 보도자료
+    keywords: [보도자료 제목의 핵심어]
+    until: 2026-11-02
+    boost: 80
+    section: 핵심
+    subtopic: 보도자료
