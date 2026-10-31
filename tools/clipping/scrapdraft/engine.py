@@ -29,6 +29,20 @@ def similarity(a: str, b: str) -> float:
     return len(x & y) / len(x | y) if x and y else 0.0
 
 
+STORY_STOP = {"한국", "미국", "중국", "일본", "정부", "기업", "시장", "투자", "산업", "경제", "글로벌", "올해", "내년",
+              "지난해", "관계자", "이번", "최대", "역대", "삼성", "삼성전자", "반도체", "하이닉스"}
+
+
+def _story_tokens(text: str) -> set[str]:
+    """같은 사안 판단용 단어. 조사 차이를 줄이려고 3자 이상 단어는 앞 3자만 쓴다(스파이였나·스파이설 → 스파이)."""
+    out = set()
+    for w in re.findall(r"[가-힣A-Za-z0-9]{2,}", text or ""):
+        w = w[:3] if len(w) >= 3 and re.match(r"[가-힣]", w) else w.lower()
+        if w not in STORY_STOP and not w.isdigit():
+            out.add(w)
+    return out
+
+
 def base_media(media: str, markers: list[str]) -> tuple[str, bool]:
     """'조선일보(가판)' -> ('조선일보', True)."""
     m = media
@@ -52,7 +66,15 @@ def _is_print(kind: str) -> bool | None:
 def _hits(text: str, words: list[str]) -> list[str]:
     """'구글+AI'처럼 +로 이은 말은 모두 들어 있어야 일치."""
     text = text or ""
-    return [w for w in words if w and all(p and p in text for p in w.split("+"))]
+
+    def has(p: str) -> bool:
+        if not p:
+            return False
+        if re.fullmatch(r"[A-Za-z]{1,3}", p):  # SK·LS·KT·MS 등은 다른 영문 단어 안에서 잡히지 않게
+            return re.search(rf"(?<![A-Za-z]){re.escape(p)}(?![A-Za-z])", text) is not None
+        return p in text
+
+    return [w for w in words if w and all(has(p) for p in w.split("+"))]
 
 
 @dataclass
@@ -150,6 +172,9 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
         r = r.copy()
         r["_subrank"] = 0
         r["_body_only"] = False
+        for mw in cfg.mask_words:   # 예: '인텔리빅스'의 '인텔'이 경쟁사로 잡히지 않게
+            r["title"] = str(r["title"]).replace(mw, " ")
+            r["subtitle"] = str(r["subtitle"]).replace(mw, " ")
         sec, sub, w, why, extra_note = classify(r, cfg)
         body_only = bool(r["_body_only"])
         subranks.append(r["_subrank"])
@@ -201,27 +226,52 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
     # 7) 다른 매체 유사 보도 묶음(삭제하지 않음, 표시와 연속 배치만)
     df["cluster"] = ""
     live_idx = list(df[df["drop_reason"] == ""].index)
-    parent = {i: i for i in live_idx}
+    toks = {i: _story_tokens(f"{df.at[i, 'title']} {df.at[i, 'subtitle']}") for i in live_idx}
+    dfreq: dict[str, int] = {}
+    for t in toks.values():
+        for w in t:
+            dfreq[w] = dfreq.get(w, 0) + 1
+    rare_cap = max(8, int(len(live_idx) * 0.06))
+    rare = {i: {w for w in t if dfreq[w] <= rare_cap} for i, t in toks.items()}
 
-    def find(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
+    def same_story(a, b) -> bool:
+        if similarity(df.at[a, "title"], df.at[b, "title"]) >= cfg.cluster_similarity:
+            return True
+        shared = rare[a] & rare[b]
+        union = rare[a] | rare[b]
+        return len(shared) >= 2 and len(shared) / max(1, len(union)) >= 0.15
 
-    for a_pos, a in enumerate(live_idx):
-        for b in live_idx[a_pos + 1:]:
-            if similarity(df.at[a, "title"], df.at[b, "title"]) >= cfg.cluster_similarity:
-                parent[find(a)] = find(b)
-    roots: dict[int, list[int]] = {}
-    for i in live_idx:
-        roots.setdefault(find(i), []).append(i)
+    # 대표(점수 높은 기사)와 직접 비슷한 기사만 붙인다 — 꼬리를 물고 이어지는 큰 묶음을 막기 위함
+    leaders: list[int] = []
+    members: dict[int, list[int]] = {}
+    for i in sorted(live_idx, key=lambda k: -float(df.at[k, "score"] or 0)):
+        for ld in leaders:
+            if same_story(ld, i):
+                members[ld].append(i)
+                break
+        else:
+            leaders.append(i)
+            members[i] = [i]
     n = 0
-    for members in roots.values():
-        if len(members) > 1:
+    for ld in leaders:
+        g = members[ld]
+        if len(g) > 1:
             n += 1
-            for i in members:
-                df.at[i, "cluster"] = f"G{n}({len(members)}건)"
+            for i in g:
+                df.at[i, "cluster"] = f"G{n}({len(g)}건)"
+    # 같은 사안 묶음은 한 자리에: 제목으로 분류된 기사들이 가장 많이 간 소제목·소주제로 맞춘다
+    for c, g in df[(df["drop_reason"] == "") & (df["cluster"] != "")].groupby("cluster"):
+        titled = g[g["reason"].str.contains(": 제목 '", regex=False) & (g["section"] != "칼럼/사설")]
+        base = titled if len(titled) else g
+        if base.empty or g["section"].isin(["칼럼/사설"]).all():
+            continue
+        top = base.groupby(["section", "subtopic"]).size().sort_values(ascending=False).index[0]
+        for i in g.index:
+            if df.at[i, "section"] == "칼럼/사설":
+                continue  # 사설·칼럼은 제자리(대표 뒤에 관련기사로만 붙음)
+            if (df.at[i, "section"], df.at[i, "subtopic"]) != top:
+                df.at[i, "note"] += f"같은 사안이라 {top[0]}/{top[1]}로 맞춤; "
+                df.at[i, "section"], df.at[i, "subtopic"] = top
     # 같은 기업 묶음(bundle_by_entity): 제목이 달라도 같은 소주제·같은 기업 기사는 한 묶음
     ent_sub = {(sec.name, st.name): st for sec in cfg.sections for st in sec.subtopics if st.bundle_by_entity}
     if ent_sub:
@@ -246,6 +296,20 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
     selected, reference = live[ok].copy(), live[~ok].copy()
     reference.loc[reference["score"] < cfg.min_score, "note"] += "기준 점수 미달; "
 
+    sel_clusters = set(selected["cluster"]) - {""}
+    pull = reference[reference["cluster"].isin(sel_clusters) & ~reference["blocked"].astype(bool)]
+    if len(pull):
+        pull = pull.copy()
+        pull["note"] += "같은 사안 관련기사; "
+        selected = pd.concat([selected, pull])
+        reference = reference.drop(pull.index)
+    dup_ref = reference[reference["cluster"] != ""].sort_values("score", ascending=False)
+    dup_ref = dup_ref[dup_ref.duplicated("cluster", keep="first")]
+    if len(dup_ref):
+        dup_ref = dup_ref.copy()
+        dup_ref["drop_reason"] = "참고 중복(같은 사안 대표 1건만 참고에)"
+        removed = pd.concat([removed, dup_ref])
+        reference = reference.drop(dup_ref.index)
     selected = order_articles(selected, cfg)
     # 보도자료 동일 보도 등 상한(max_items): 주요 매체순 상위 N건만 추천, 나머지는 참고(삭제 아님)
     for iss in cfg.issues:
@@ -264,7 +328,11 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
                 continue
             members = selected[(selected["section"] == sec.name) & (selected["subtopic"] == st.name)]
             members = members[~members["title"].map(lambda t: bool(_hits(t, st.cap_exempt)))]
-            extra = members.iloc[st.max_items:]
+            gkey = members.apply(lambda r: r["cluster"] or f"_{r.name}", axis=1)
+            sizes = gkey.value_counts()
+            best = members.assign(_g=gkey, _n=gkey.map(sizes)).groupby("_g").agg(n=("_n", "first"), sc=("score", "max"))
+            keep = set(best.sort_values(["n", "sc"], ascending=False).index[: st.max_items])
+            extra = members[~gkey.isin(keep)]
             if len(extra):
                 extra = extra.copy()
                 extra["note"] += f"'{sec.name}/{st.name}' 상한 {st.max_items}건 초과; "
@@ -345,11 +413,19 @@ def _classify(r, cfg: Config):
             r["_subrank"] = subrank
             label = f"{s.name}/{sub}" if sub else s.name
             return s.name, sub, s.weight, [f"{label}: 제목 '{h[0]}'(시황·일반 기사)"], ""
-    for body in (False, True):
+    weak = set(cfg.weak_keywords)
+    # 구체 단서(제목→부제목) → 넓은 단서(제목→부제목) → 본문(검색어) 순
+    passes = [("제목", r["title"], False, "strong"), ("부제목", text, False, "strong"),
+              ("제목", r["title"], False, "weak"), ("부제목", text, False, "weak"),
+              ("본문(검색어)", r["keyword"], True, "any")]
+    for where, src, body, kind in passes:
         for s in cfg.sections:
             if s.opinion:
                 continue
-            h = _hits(r["keyword"] if body else text, s.keywords)
+            kws = [k for k in s.keywords if (k in weak) == (kind == "weak")] if kind != "any" else s.keywords
+            if where != "제목":
+                kws = [k for k in kws if k not in cfg.title_only_keywords]
+            h = _hits(src, kws)
             if not h:
                 continue
             sub, subrank = _subtopic(s, text, r["keyword"], body, r["title"])
@@ -357,8 +433,8 @@ def _classify(r, cfg: Config):
             r["_body_only"] = body
             label = f"{s.name}/{sub}" if sub else s.name
             factor = cfg.body_factor if body else 1.0
-            where = "본문(검색어)" if body else "제목"
-            return s.name, sub, s.weight * factor, [f"{label}: {where} '{h[0]}'" + ("(제목엔 없음)" if body else "")], ""
+            tag = "(넓은 단서)" if kind == "weak" else ""
+            return s.name, sub, s.weight * factor, [f"{label}: {where}{tag} '{h[0]}'" + ("(제목엔 없음)" if body else "")], ""
     return cfg.default_section, "", cfg.default_weight, [], ""
 
 
@@ -379,12 +455,14 @@ def order_articles(sel: pd.DataFrame, cfg: Config) -> pd.DataFrame:
                    for sec, sub in zip(sel["section"], sel["subtopic"])]
     sel["_subrank"] = sel["subrank"] if "subrank" in sel else 0
     sel["_media"] = sel["paper"].map(cfg.media_rank)
+    sel["_issue"] = [1 if (str(sv).strip() == "부정" or str(al).strip()) else 0
+                     for sv, al in zip(sel.get("sentiment", [""] * len(sel)), sel.get("alert", [""] * len(sel)))]
     sel["_page"] = sel["page_no"].fillna(999)
     sel["_size"] = -sel["size_cm2"].fillna(0)
     sel["_shape"] = [0 if cfg.good_shape(w, h) else 1 for w, h in
                      zip(sel.get("width_cm", [None] * len(sel)), sel.get("height_cm", [None] * len(sel)))]
-    sel = sel.sort_values(["_sec", "pin", "_sub", "_subrank", "_media", "_shape", "_page", "_size"],
-                          ascending=[True, False, True, True, True, True, True, True])
+    sel = sel.sort_values(["_sec", "pin", "_sub", "_subrank", "_issue", "_media", "_shape", "_page", "_size"],
+                          ascending=[True, False, True, True, True, True, True, True, True])
 
     out, seen, toc = [], set(), {}
     rows = list(sel.index)
@@ -398,14 +476,14 @@ def order_articles(sel: pd.DataFrame, cfg: Config) -> pd.DataFrame:
             shown = 1
             for j in rows:
                 same_sec = sel.at[j, "section"] == sel.at[i, "section"]
-                if j not in seen and sel.at[j, "cluster"] == c and (same_sec or c.startswith("현안:")):
+                if j not in seen and sel.at[j, "cluster"] == c:
                     out.append(j); seen.add(j)
                     if shown < cfg.toc_max:
                         toc[j] = "표시(묶음)"
                         shown += 1
                     else:
                         toc[j] = "숨김(관련기사)"
-    sel = sel.loc[out].drop(columns=["_sec", "_sub", "_subrank", "_media", "_shape", "_page", "_size"])
+    sel = sel.loc[out].drop(columns=["_sec", "_sub", "_subrank", "_issue", "_media", "_shape", "_page", "_size"])
     sel["rank"] = range(1, len(sel) + 1)
     sel["toc"] = [toc[i] for i in out]
     return sel

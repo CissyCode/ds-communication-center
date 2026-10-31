@@ -82,6 +82,9 @@ class Config:
     body_factor: float = 0.5          # 제목엔 없고 본문(검색어)에서만 걸린 기사의 점수 비율. 이 경우 1면·크기 가점 없음
     require_byline: bool = False      # 기자명이 없으면 기사로 보지 않음(사설·칼럼 제외)
     force_sections: list[dict] = field(default_factory=list)  # 제목에 이 말이 있으면 해당 소제목으로(예: 증시·부동산 → 기타)
+    weak_keywords: list[str] = field(default_factory=list)  # 넓은 단서(삼성·반도체·SK·美 등). 구체 단서가 없을 때만 분류에 씀
+    title_only_keywords: list[str] = field(default_factory=list)  # 부제목에만 있으면 분류 단서로 쓰지 않는 말
+    mask_words: list[str] = field(default_factory=list)  # 분류 전에 지우는 말(예: '인텔리빅스'가 '인텔'로 잡히지 않게 '인텔리')
     hints: list[dict] = field(default_factory=list)   # 제목에 이 말이 있으면 '확인 메모'만 남김(위치는 바꾸지 않음)
     toc_max: int = 1                  # 묶음(같은 사안·연결기사)에서 목차에 표시할 건수
     alert_keywords: list[str] = field(default_factory=list)   # '우선 검토' 표시(배열과 별개)
@@ -215,6 +218,9 @@ def load_config(path: str | Path, extra: list[str | Path] | None = None) -> Conf
         body_factor=float(c.get("body_factor", 0.5)),
         require_byline=bool(c.get("require_byline", False)),
         force_sections=list(c.get("force_sections") or []),
+        weak_keywords=list(c.get("weak_keywords") or []),
+        title_only_keywords=list(c.get("title_only_keywords") or []),
+        mask_words=list(c.get("mask_words") or []),
         hints=list(c.get("hints") or []),
         toc_max=int(c.get("toc_max", 1)),
         alert_keywords=list(c.get("alert_keywords") or []),
