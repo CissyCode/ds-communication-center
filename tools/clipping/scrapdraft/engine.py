@@ -355,6 +355,62 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             extra["drop_reason"] = f"같은 사안 {cfg.bundle_max_other}건 초과(당사 기사 아님, 주요 매체순)"
             removed = pd.concat([removed, extra])
             selected = order_articles(selected.drop(drop), cfg)
+    # 연결기사: 추천 기사와 같은 신문·같은 날짜의 같은 사안 기사(1면→속지 연결, 해설·박스 등)는
+    # 상한·묶음 건수와 상관없이 함께 담고, 대표 바로 뒤에 둔다(목차에는 숨김).
+    selected["link"] = ""
+    if cfg.link_same_paper and not selected.empty:
+        movable = removed["drop_reason"].str.startswith(("같은 사안", "참고 중복"))
+        pool = pd.concat([reference[~reference["blocked"].astype(bool) & (reference["is_print"] == True)],  # noqa: E712
+                          removed[movable]])
+        pool = pool[~pool.index.isin(selected.index)]
+        rep_of = lambda i, frame: str(frame.at[i, "reporter"]).strip() if "reporter" in frame and pd.notna(frame.at[i, "reporter"]) else ""
+
+        def linked(a, fa, b, fb) -> bool:
+            if fa.at[a, "paper"] != fb.at[b, "paper"] or fa.at[a, "date"] != fb.at[b, "date"]:
+                return False
+            ra, rb = rare.get(a, set()), rare.get(b, set())
+            shared = ra & rb
+            if similarity(fa.at[a, "title"], fb.at[b, "title"]) >= cfg.cluster_similarity or len(shared) >= 2:
+                return True
+            ra_, rb_ = rep_of(a, fa), rep_of(b, fb)
+            return bool(shared) and bool(ra_) and ra_ == rb_
+
+        anchors = list(selected.sort_values("rank").index)
+        taken: set = set()
+        add = []
+        for a in anchors:
+            if a in taken:
+                continue
+            n_link = 0
+            # 이미 추천된 같은 신문 연결기사는 대표 뒤로 모은다
+            for b in anchors:
+                if b != a and b not in taken and selected.at[b, "link"] == "" and n_link < cfg.link_max \
+                        and selected.at[b, "rank"] > selected.at[a, "rank"] and linked(a, selected, b, selected):
+                    selected.at[b, "link"] = selected.at[a, "key"]
+                    taken.add(b)
+                    n_link += 1
+            for b in pool.index:
+                if b in taken or n_link >= cfg.link_max:
+                    continue
+                if linked(a, selected, b, pool):
+                    row = pool.loc[[b]].copy()
+                    row["link"] = selected.at[a, "key"]
+                    row["section"], row["subtopic"] = selected.at[a, "section"], selected.at[a, "subtopic"]
+                    row["cluster"] = selected.at[a, "cluster"]
+                    row["note"] += "연결기사(같은 신문 같은 사안); "
+                    row["drop_reason"] = ""
+                    add.append(row)
+                    taken.add(b)
+                    n_link += 1
+            if n_link == 0 and selected.at[a, "page_no"] == 1:
+                selected.at[a, "note"] += "1면 기사 — 검색결과에 연결기사 없음, 지면 확인; "
+        if add:
+            extra = pd.concat(add)
+            reference = reference.drop([i for i in extra.index if i in reference.index])
+            removed = removed.drop([i for i in extra.index if i in removed.index])
+            selected = pd.concat([selected, extra])
+        if (selected["link"] != "").any():
+            selected = order_articles(selected, cfg)
     flag_same_media_runs(selected)
     # 묶음 표시를 실제 추천 건수로 고침(상한으로 줄어든 경우)
     if not selected.empty:
@@ -489,23 +545,41 @@ def order_articles(sel: pd.DataFrame, cfg: Config) -> pd.DataFrame:
 
     out, seen, toc = [], set(), {}
     rows = list(sel.index)
+    links: dict[str, list] = {}
+    if "link" in sel:
+        keys = set(sel["key"])
+        for j in rows:
+            lk = sel.at[j, "link"]
+            if lk and lk in keys:
+                links.setdefault(lk, []).append(j)
+
+    def emit_links(i):
+        for j in links.get(sel.at[i, "key"], []):
+            if j not in seen:
+                out.append(j); seen.add(j)
+                toc[j] = "숨김(연결기사)"
+
     for i in rows:
         if i in seen:
             continue
+        if "link" in sel and sel.at[i, "link"] and sel.at[i, "link"] in links and i in links[sel.at[i, "link"]]:
+            continue   # 연결기사는 대표 뒤에서 나온다
         out.append(i); seen.add(i)
         c = sel.at[i, "cluster"]
         toc[i] = "표시"
+        emit_links(i)
         if c:
             shown = 1
             for j in rows:
                 same_sec = sel.at[j, "section"] == sel.at[i, "section"]
-                if j not in seen and sel.at[j, "cluster"] == c:
+                if j not in seen and sel.at[j, "cluster"] == c and not ("link" in sel and sel.at[j, "link"] in links):
                     out.append(j); seen.add(j)
                     if shown < cfg.toc_max:
                         toc[j] = "표시(묶음)"
                         shown += 1
                     else:
                         toc[j] = "숨김(관련기사)"
+                    emit_links(j)
     sel = sel.loc[out].drop(columns=["_sec", "_sub", "_subrank", "_issue", "_media", "_shape", "_page", "_size"])
     sel["rank"] = range(1, len(sel) + 1)
     sel["toc"] = [toc[i] for i in out]

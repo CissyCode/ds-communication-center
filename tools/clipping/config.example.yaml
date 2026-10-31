@@ -52,3 +52,7 @@ exclude_keywords: [부고, 전면광고, 지면광고]
 # 카테고리가 이것이면 제외 후보(예: '삼성' 검색어에 걸린 야구 기사, 광고)
 exclude_categories: [광고, 스포츠]
 scoring: {min_score: 40, front_page_bonus: 30, early_page_bonus: 10, early_page_until: 5, size_bonus_per_100cm2: 2}
+
+# 연결기사: 추천 기사와 같은 신문·같은 날짜의 같은 사안 기사는 점수·상한과 상관없이 함께 담고 대표 바로 뒤에 둔다
+link_same_paper: true
+link_max: 4

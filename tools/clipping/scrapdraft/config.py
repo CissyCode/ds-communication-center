@@ -91,6 +91,8 @@ class Config:
     own_sections: list[str] = field(default_factory=list)       # 당사로 보는 소제목(예: 삼성)
     own_subtopic_prefixes: list[str] = field(default_factory=list)  # 당사로 보는 소주제 앞글자(예: DS)
     toc_max: int = 1                  # 묶음(같은 사안·연결기사)에서 목차에 표시할 건수
+    link_same_paper: bool = True      # 추천 기사와 같은 신문·같은 날짜의 같은 사안 기사(연결기사)를 함께 담음
+    link_max: int = 4                 # 기사 1건에 붙이는 연결기사 최대 건수
     alert_keywords: list[str] = field(default_factory=list)   # '우선 검토' 표시(배열과 별개)
     volume_range: tuple[int, int] | None = None               # 분량 참고 범위(자르지 않음)
     evening_papers: list[str] = field(default_factory=list)   # 석간: 대상일 전날 발행분을 정상으로 봄
@@ -231,6 +233,8 @@ def load_config(path: str | Path, extra: list[str | Path] | None = None) -> Conf
         own_sections=list(c.get("own_sections") or []),
         own_subtopic_prefixes=list(c.get("own_subtopic_prefixes") or []),
         toc_max=int(c.get("toc_max", 1)),
+        link_same_paper=bool(c.get("link_same_paper", True)),
+        link_max=int(c.get("link_max", 4)),
         alert_keywords=list(c.get("alert_keywords") or []),
         volume_range=tuple(c["volume_range"]) if c.get("volume_range") else None,
         evening_papers=list(c.get("evening_papers") or []),

@@ -128,7 +128,7 @@ class ScrapDraftTest(unittest.TestCase):
         sel = res.selected.set_index("key")
         keys = list(res.selected["key"])
         self.assertLess(keys.index("S:2002"), keys.index("S:2001"), "세로형이 대표")
-        self.assertEqual(sel.at["S:2001", "toc"], "숨김(관련기사)")
+        self.assertTrue(sel.at["S:2001", "toc"].startswith("숨김"))   # 같은 신문 같은 사안 → 연결기사로 대표 뒤
         self.assertIn("세로형", sel.at["S:2002", "reason"])
         self.assertNotIn("발행일", sel.at["S:2003", "note"], "석간 전날 자는 정상")
 
@@ -311,6 +311,23 @@ class ScrapDraftTest(unittest.TestCase):
         self.assertEqual(acts["S:7777"], "사람이 추가")
         self.assertEqual(acts["S:1002"], "사람이 제외")
         self.assertEqual(acts["S:1001"], "순서 이동")
+
+    def test_linked_same_paper_article_follows_anchor(self):
+        """같은 신문·같은 날짜의 같은 사안 기사(연결기사)는 점수가 낮아도 대표 바로 뒤에 담는다."""
+        p = self.tmp / "linked.xlsx"
+        rows = ROWS + [[18, "양산 돌입 뒷얘기 수율 관건", "", "전자신문", "4", D, "지면", "산업", "200cm²", "기타", "1018"],
+                       [19, "양산 돌입 수율 다른 신문", "", "한국일보", "9", D, "지면", "산업", "200cm²", "기타", "1019"]]
+        blank = [None] * len(HEADER)
+        pd.DataFrame([["검색 결과"] + blank[1:], HEADER, *rows, ["합계"] + blank[1:]]).to_excel(p, header=False, index=False)
+        res = build_draft(read_export(p), self.cfg(), date(2026, 11, 2), now=datetime(2026, 11, 2, 9, 0))
+        keys = list(res.selected["key"])
+        self.assertIn("S:1018", keys)
+        other = res.selected[res.selected["key"] == "S:1019"]
+        self.assertTrue(other.empty or other.iloc[0]["link"] == "")   # 다른 신문은 연결기사가 아님
+        self.assertEqual(keys[keys.index("S:1001") + 1], "S:1018")
+        row = res.selected[res.selected["key"] == "S:1018"].iloc[0]
+        self.assertEqual(row["toc"], "숨김(연결기사)")
+        self.assertEqual(row["link"], "S:1001")
 
     def test_analyze(self):
         past = self.tmp / "past"
