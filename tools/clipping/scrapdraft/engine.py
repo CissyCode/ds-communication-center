@@ -50,7 +50,9 @@ def _is_print(kind: str) -> bool | None:
 
 
 def _hits(text: str, words: list[str]) -> list[str]:
-    return [w for w in words if w and w in text]
+    """'구글+AI'처럼 +로 이은 말은 모두 들어 있어야 일치."""
+    text = text or ""
+    return [w for w in words if w and all(p and p in text for p in w.split("+"))]
 
 
 @dataclass
@@ -270,18 +272,22 @@ def classify(r, cfg: Config):
     sec, sub, w, why, note = _classify(r, cfg)
     s = next((x for x in cfg.sections if x.name == sec), None)
     if s and s.require_keywords:
-        text = f"{r['title']} {r['subtitle']} {r['keyword']}"
+        # 검색어 칸은 보지 않는다(이 검색 그룹 기사는 모두 '삼성'·'반도체'로 검색돼 항상 통과하므로)
+        text = f"{r['title']} {r['subtitle']}"
         if not _hits(text, s.require_keywords):
             return sec, sub, 0.0, why + [f"{sec}: {'·'.join(s.require_keywords[:3])} 관련 아님"], \
                 note + f"{'·'.join(s.require_keywords[:3])} 관련 아님; "
     return sec, sub, w, why, note
 
 
-def _subtopic(s, text: str, kw: str, body: bool):
-    for st in s.subtopics:
-        hit = _hits(text, st.keywords) or (body and _hits(kw, st.keywords))
-        if hit:
-            return st.name, (min(st.keywords.index(h) for h in hit) if st.ordered else 0)
+def _subtopic(s, text: str, kw: str, body: bool, title: str | None = None):
+    """제목에서 먼저 찾고, 없으면 제목+부제목, 본문 일치 기사는 검색어까지."""
+    passes = ([title] if title else []) + [text] + ([kw] if body else [])
+    for t in passes:
+        for st in s.subtopics:
+            hit = _hits(t, st.keywords)
+            if hit:
+                return st.name, (min(st.keywords.index(h) for h in hit) if st.ordered else 0)
     if s.subtopics and not s.subtopics[-1].keywords:
         return s.subtopics[-1].name, 0
     return "", 0
@@ -294,6 +300,9 @@ def _classify(r, cfg: Config):
         for s in cfg.sections:
             if s.opinion:
                 if s.preferred_media and r["paper"] not in s.preferred_media:
+                    h = _hits(text, s.other_media_require)
+                    if h:  # 우선 매체 외라도 반도체·삼성 관련 주제면 포함
+                        return s.name, "", s.weight, [f"{s.name}(우선 매체 외, 주제 '{h[0]}')"], ""
                     return s.name, "", s.weight * s.other_media_factor, [f"{s.name}(우선 매체 외)"], ""
                 return s.name, "", s.weight, [f"{s.name}"], ""
     by_name = {s.name: s for s in cfg.sections}
@@ -301,7 +310,7 @@ def _classify(r, cfg: Config):
         h = _hits(r["title"], f.get("keywords") or [])
         if h and not _hits(r["title"], f.get("unless") or []) and f.get("section") in by_name:
             s = by_name[f["section"]]
-            sub, subrank = _subtopic(s, text, r["keyword"], False)
+            sub, subrank = _subtopic(s, text, r["keyword"], False, r["title"])
             if f.get("subtopic"):
                 sub = f["subtopic"]
             r["_subrank"] = subrank
@@ -314,7 +323,7 @@ def _classify(r, cfg: Config):
             h = _hits(r["keyword"] if body else text, s.keywords)
             if not h:
                 continue
-            sub, subrank = _subtopic(s, text, r["keyword"], body)
+            sub, subrank = _subtopic(s, text, r["keyword"], body, r["title"])
             r["_subrank"] = subrank
             r["_body_only"] = body
             label = f"{s.name}/{sub}" if sub else s.name
