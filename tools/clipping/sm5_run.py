@@ -4,9 +4,9 @@
   1) [검색] 탭 → 자동검색 [결과 갱신] → 검색어별 건수 기록
   2) 후보 검색어 그룹 결과를 공식 [엑셀 저장]으로 받기
   3) 엔진(scrapdraft)으로 선정·분류·배열
-  4) 검토 그룹에 이미 있는 기사(Serial)는 건너뛰고, 새 추천 기사만 체크해 [스크랩]
+  4) 검토 그룹에 이미 있는 기사(Serial)는 건너뛰고, 새 추천 기사만 추천 순서대로 [스크랩]
   5) 검토 그룹을 [엑셀로 내보내기]로 받아 Serial 검증
-  6) 검토 그룹을 추천 순서로 정렬([맨 위로]) 후 다시 내보내 검증
+  6) 순서가 어긋난 기사만 [맨 위로]로 정렬 후 다시 내보내 검증
 
 단계 제한(--until): export(2까지, 스크랩 안 함) / scrap(5까지) / order(6까지, 기본)
 사람이 검토 그룹에 직접 넣은 기사가 있으면 정렬하지 않고 추가만 한다.
@@ -39,13 +39,14 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31u"
+VERSION = "2026-10-31v"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
 TITLE_DX = 120
 BUTTON_DY = -27
 RESULT_BUTTONS = {"전체 선택": 51, "선택 해제": 128, "스크랩": 275, "엑셀 저장": 346}
+CURRENT_SPEC: str | None = None   # 지금 검색결과에 떠 있는 검색어 그룹
 PAGE_SIZE = 500   # 검색결과 '500개씩 보기' 기준. 넘으면 멈춤.
 
 # 저장 항목은 '켜기만' 하고 끄지 않는다(저장 옵션은 계정 단위로 동기화되므로 담당자 설정을 줄이지 않음).
@@ -491,6 +492,15 @@ def open_source_group(win, spec: str) -> int:
         kw = by_id(win, "tbCurrentSearchResultKeywordInfo1")
         return kw is not None and kw.window_text().strip() == keyword
 
+    global CURRENT_SPEC
+    if CURRENT_SPEC != spec and CURRENT_SPEC is not None and CURRENT_SPEC.partition("@")[0] == keyword:
+        # 같은 검색어(매체 수만 다름)끼리는 제목으로 바뀐 걸 알 수 없으므로 선택 후 잠시 기다린다
+        try:
+            target.select()
+        except Exception:
+            label = [x for x in texts(target) if x.strip() == keyword]
+            (find(target, title=label[0], control_type="Text") if label else target).click_input()
+        time.sleep(3)
     if not switched():
         try:
             target.select()          # 목록에서 선택(화면 밖에 있어도 동작)
@@ -511,6 +521,7 @@ def open_source_group(win, spec: str) -> int:
             time.sleep(0.5)
     if not switched():
         raise SkipGroup(f"검색결과가 '{keyword}'로 바뀌지 않았습니다.")
+    CURRENT_SPEC = spec
     tab = need(win, "tcSearchResultTab")
     for ti in tab.children(control_type="TabItem"):
         if "지면기사" in texts(ti):
@@ -585,6 +596,35 @@ def scrap_rows(win, seqs: list[int]) -> None:
     result_button(win, "스크랩")
     time.sleep(1.5)
     no_popup_or_stop(win, "[스크랩]")
+
+
+def plan_batches(keys: list[str], options: dict[str, list[tuple[str, int]]]) -> list[tuple[str, list[str], list[int]]]:
+    """추천 순서(keys)대로 담기 위한 묶음 계획. 한 번의 [스크랩]은 검색결과 목록 순서(연번 오름차순)로
+    그룹 끝에 쌓인다고 보고, 같은 검색어 그룹에서 연번이 커지는 동안 이어지는 기사들을 한 묶음으로 만든다.
+    같은 기사가 여러 검색어 그룹에 있으면 가장 길게 이어지는 그룹을 고른다.
+    반환: [(검색어 그룹, [기사 키...], [연번...]), ...]"""
+    by_src: dict[str, dict[str, int]] = {}
+    for k, opts in options.items():
+        for src, seq in opts:
+            by_src.setdefault(src, {}).setdefault(k, seq)
+    batches = []
+    i = 0
+    while i < len(keys):
+        best = None
+        for src, _ in options.get(keys[i], []):
+            m = by_src[src]
+            j, last = i, -1
+            while j < len(keys) and keys[j] in m and m[keys[j]] > last:
+                last = m[keys[j]]
+                j += 1
+            if best is None or j - i > best[1] - i:
+                best = (src, j)
+        if best is None:
+            raise Stop(f"담을 기사 {keys[i]}의 검색어 그룹·연번을 찾지 못했습니다.")
+        src, j = best
+        batches.append((src, keys[i:j], [by_src[src][k] for k in keys[i:j]]))
+        i = j
+    return batches
 
 
 def _container_elements(item) -> list:
@@ -896,18 +936,24 @@ def main() -> int:
         todo = res.selected[~res.selected["key"].isin(have)]
         log(f"검토 그룹 기존 {n_before}건, 새로 담을 {len(todo)}건")
 
-        for spec in sources:
-            part = todo[todo["source"] == spec]
-            if part.empty:
-                continue
+        # 추천 순서대로 담는다(같은 검색어 그룹에서 이어지는 기사는 한 번에). 그러면 정렬 이동이 거의 없다.
+        options: dict[str, list[tuple[str, int]]] = {}
+        for k, src, seq in df[["key", "source", "seq"]].itertuples(index=False):
+            if pd.notna(seq):
+                options.setdefault(k, []).append((src, int(float(seq))))
+        batches = plan_batches(list(todo["key"]), options)
+        if batches:
+            log(f"추천 순서대로 담기: {len(todo)}건을 {len(batches)}번에 나눠 담음")
+        for b, (spec, keys, seqs) in enumerate(batches, 1):
             open_source_group(win, spec)
             select_group(win, group)
             n_b = group_count(win, group) or 0
-            scrap_rows(win, [int(float(s)) for s in part["seq"]])
+            scrap_rows(win, seqs)
             n_a = group_count(win, group) or 0
-            if n_a - n_b != len(part):
-                raise Stop(f"'{spec}' 담기: 그룹 건수 증가 {n_a - n_b}건 ≠ 기대 {len(part)}건. 화면을 확인해 주세요.")
-            log(f"'{spec}'에서 {len(part)}건 담음")
+            if n_a - n_b != len(keys):
+                raise Stop(f"'{spec}' 담기: 그룹 건수 증가 {n_a - n_b}건 ≠ 기대 {len(keys)}건. 화면을 확인해 주세요.")
+            if b % 10 == 0:
+                log(f"담기 진행 {b}/{len(batches)}")
 
         # 5) 검증
         after = export_group(win, group, run_dir / f"검토그룹_후_{stamp}.xlsx")
@@ -926,7 +972,12 @@ def main() -> int:
             log(f"자동 추천 외 기사 {len(extra)}건이 있어 정렬하지 않습니다(수동 작업 보존).")
         else:
             desired = list(res.selected["key"])
-            reorder(win, group, list(after["key"]), desired)
+            moves = plan_moves(list(after["key"]), desired)
+            if moves:
+                log(f"담긴 순서와 추천 순서가 {len(moves)}건 다름 — 정렬 진행")
+                reorder(win, group, list(after["key"]), desired)
+            else:
+                log("담긴 순서가 이미 추천 순서와 같음 — 정렬 생략")
             final = export_group(win, group, run_dir / f"검토그룹_정렬후_{stamp}.xlsx")
             if list(final["key"])[: len(desired)] != desired:
                 raise Stop("정렬 후 순서가 추천안과 다릅니다. 화면을 확인해 주세요.")
