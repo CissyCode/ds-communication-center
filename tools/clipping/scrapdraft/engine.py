@@ -117,8 +117,18 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             elif mains.empty:
                 df.at[i, "note"] += "본판 미확인(가판 임시 대표); "
 
-    # 5) 기획면(지정한 면 접두어)·제외 키워드 → 삭제하지 않고 제외 후보로
+    # 5) 기획면(지정한 면 접두어)·제외 키워드·바이라인 없음 → 삭제하지 않고 제외 후보로
+    def _byline(v) -> bool:
+        t = str(v if v is not None else "").strip()
+        return bool(t) and t.lower() not in ("nan", "none")
+
+    # 기자 항목 자체가 저장되지 않은 엑셀이면(전부 빈칸) 이 규칙을 쓰지 않는다
+    check_byline = cfg.require_byline and "reporter" in df and df["reporter"].map(_byline).any()
     for i, r in df[df["drop_reason"] == ""].iterrows():
+        if check_byline and not _byline(r.get("reporter")):
+            if not _is_opinion(r, cfg):
+                df.at[i, "drop_reason"] = "제외 후보(바이라인 없음 — 기사 아님)"
+                continue
         pg = str(r["page_raw"]).strip().upper()
         if pg and cfg.exclude_page_prefixes and pg[0] in cfg.exclude_page_prefixes:
             df.at[i, "drop_reason"] = f"제외 후보(기획면 {r['page_raw']})"
@@ -136,7 +146,9 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
     for _, r in df.iterrows():
         r = r.copy()
         r["_subrank"] = 0
+        r["_body_only"] = False
         sec, sub, w, why, extra_note = classify(r, cfg)
+        body_only = bool(r["_body_only"])
         subranks.append(r["_subrank"])
         alerts.append(", ".join(_hits(f"{r['title']} {r['subtitle']}", cfg.alert_keywords)))
         if extra_note:
@@ -146,7 +158,9 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             if not iss.active(target_date):
                 continue
             text = f"{r['title']} {r['subtitle']}"
-            h = _hits(text, iss.keywords) or _hits(r["keyword"], iss.keywords)
+            h = _hits(text, iss.keywords)
+            if h and iss.require_keywords and not _hits(text, iss.require_keywords):
+                h = []
             if h:
                 score += iss.boost
                 pin = pin or iss.pin_top
@@ -157,16 +171,17 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
                 if iss.bundle and not bundle:
                     bundle = iss.name
                 why.append(f"현안 '{iss.name}'(~{iss.until})")
-        if r["page_no"] == 1:
-            score += cfg.front_page_bonus
-            why.append("1면")
-        elif r["page_no"] and r["page_no"] <= cfg.early_page_until:
-            score += cfg.early_page_bonus
-        if r["size_cm2"]:
-            score += cfg.size_bonus_per_100cm2 * r["size_cm2"] / 100
-        if cfg.shape_bonus and cfg.good_shape(r.get("width_cm"), r.get("height_cm")):
-            score += cfg.shape_bonus
-            why.append("세로형(3~4단)")
+        if not body_only:  # 본문에서만 걸린 기사는 1면·크기·모양 가점을 주지 않는다
+            if r["page_no"] == 1:
+                score += cfg.front_page_bonus
+                why.append("1면")
+            elif r["page_no"] and r["page_no"] <= cfg.early_page_until:
+                score += cfg.early_page_bonus
+            if r["size_cm2"]:
+                score += cfg.size_bonus_per_100cm2 * r["size_cm2"] / 100
+            if cfg.shape_bonus and cfg.good_shape(r.get("width_cm"), r.get("height_cm")):
+                score += cfg.shape_bonus
+                why.append("세로형(3~4단)")
         scores.append(round(score, 1)); sections.append(sec); subs.append(sub); reasons.append("; ".join(why)); pins.append(pin)
         bundles.append(bundle)
         blocked.append(any("관련 아님" in x for x in why))
@@ -224,6 +239,19 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
                 extra["note"] += f"'{iss.name}' 동일 보도 {iss.max_items}건 초과(주요 매체순); "
                 reference = pd.concat([reference, extra])
                 selected = order_articles(selected.drop(extra.index), cfg)
+    # 소주제 상한(예: 증시·시황, 부동산 각 2건). 제목에 cap_exempt 말이 있으면 상한에서 빼고 센다
+    for sec in cfg.sections:
+        for st in sec.subtopics:
+            if not st.max_items:
+                continue
+            members = selected[(selected["section"] == sec.name) & (selected["subtopic"] == st.name)]
+            members = members[~members["title"].map(lambda t: bool(_hits(t, st.cap_exempt)))]
+            extra = members.iloc[st.max_items:]
+            if len(extra):
+                extra = extra.copy()
+                extra["note"] += f"'{sec.name}/{st.name}' 상한 {st.max_items}건 초과; "
+                reference = pd.concat([reference, extra])
+                selected = order_articles(selected.drop(extra.index), cfg)
     flag_same_media_runs(selected)
     reference = reference.sort_values("score", ascending=False)
 
@@ -249,8 +277,18 @@ def classify(r, cfg: Config):
     return sec, sub, w, why, note
 
 
+def _subtopic(s, text: str, kw: str, body: bool):
+    for st in s.subtopics:
+        hit = _hits(text, st.keywords) or (body and _hits(kw, st.keywords))
+        if hit:
+            return st.name, (min(st.keywords.index(h) for h in hit) if st.ordered else 0)
+    if s.subtopics and not s.subtopics[-1].keywords:
+        return s.subtopics[-1].name, 0
+    return "", 0
+
+
 def _classify(r, cfg: Config):
-    """사설·칼럼 판단이 주제보다 먼저."""
+    """사설·칼럼 → 강제 소제목(증시·부동산 등) → 모든 소제목의 제목 일치 → 본문(검색어) 일치 순."""
     text = f"{r['title']} {r['subtitle']}"
     if _is_opinion(r, cfg):
         for s in cfg.sections:
@@ -258,29 +296,31 @@ def _classify(r, cfg: Config):
                 if s.preferred_media and r["paper"] not in s.preferred_media:
                     return s.name, "", s.weight * s.other_media_factor, [f"{s.name}(우선 매체 외)"], ""
                 return s.name, "", s.weight, [f"{s.name}"], ""
-    for s in cfg.sections:
-        if s.opinion:
-            continue
-        h = _hits(text, s.keywords)
-        factor, where = 1.0, "제목"
-        if not h:
-            h = _hits(r["keyword"], s.keywords)
-            factor, where = 0.5, "검색어"
-        if not h:
-            continue
-        sub, subrank = "", 0
-        for st in s.subtopics:
-            hit = _hits(text, st.keywords) or (factor < 1 and _hits(r["keyword"], st.keywords))
-            if hit:
-                sub = st.name
-                if st.ordered:
-                    subrank = min(st.keywords.index(h) for h in hit)
-                break
-        r["_subrank"] = subrank
-        if not sub and s.subtopics:
-            sub = s.subtopics[-1].name if not s.subtopics[-1].keywords else ""
-        label = f"{s.name}/{sub}" if sub else s.name
-        return s.name, sub, s.weight * factor, [f"{label}: {where} '{h[0]}'" + ("(제목엔 없음)" if factor < 1 else "")], ""
+    by_name = {s.name: s for s in cfg.sections}
+    for f in cfg.force_sections:
+        h = _hits(r["title"], f.get("keywords") or [])
+        if h and not _hits(r["title"], f.get("unless") or []) and f.get("section") in by_name:
+            s = by_name[f["section"]]
+            sub, subrank = _subtopic(s, text, r["keyword"], False)
+            if f.get("subtopic"):
+                sub = f["subtopic"]
+            r["_subrank"] = subrank
+            label = f"{s.name}/{sub}" if sub else s.name
+            return s.name, sub, s.weight, [f"{label}: 제목 '{h[0]}'(시황·일반 기사)"], ""
+    for body in (False, True):
+        for s in cfg.sections:
+            if s.opinion:
+                continue
+            h = _hits(r["keyword"] if body else text, s.keywords)
+            if not h:
+                continue
+            sub, subrank = _subtopic(s, text, r["keyword"], body)
+            r["_subrank"] = subrank
+            r["_body_only"] = body
+            label = f"{s.name}/{sub}" if sub else s.name
+            factor = cfg.body_factor if body else 1.0
+            where = "본문(검색어)" if body else "제목"
+            return s.name, sub, s.weight * factor, [f"{label}: {where} '{h[0]}'" + ("(제목엔 없음)" if body else "")], ""
     return cfg.default_section, "", cfg.default_weight, [], ""
 
 

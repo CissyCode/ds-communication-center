@@ -178,6 +178,50 @@ class ScrapDraftTest(unittest.TestCase):
         self.assertIn("S:5002", list(res.selected["key"]))
         self.assertIn("S:5001", list(res.reference["key"]))
 
+    def test_feedback_rules(self):
+        """실제 초안 피드백: 바이라인 없음 제외, 본문만 일치는 1면이어도 참고, 시황은 기타·상한, 제목 일치 우선, 현안 조건."""
+        base = (HERE / "tests" / "fixture_config.yaml").read_text(encoding="utf-8")
+        base = base.replace("      - {name: 경제, keywords: [경제]}",
+                            "      - {name: 증시·시황, keywords: [코스피, 코스닥], max_items: 2, cap_exempt: [가나전자]}\n"
+                            "      - {name: 경제, keywords: [경제]}")
+        base = base.replace("    keywords: [정부, 경제]\n", "    keywords: [정부, 경제, 코스피, 코스닥]\n")
+        base += ("require_byline: true\nbody_factor: 0.3\n"
+                 "force_sections:\n  - {section: 기타, keywords: [코스피, 코스닥], unless: [가나전자]}\n")
+        cfg_p = self.tmp / "cfg3.yaml"
+        cfg_p.write_text(base, encoding="utf-8")
+        iss = self.tmp / "iss3.yaml"
+        iss.write_text("issues:\n  - {name: 노조, keywords: [노조], until: 2026-11-30, boost: 60, section: 핵심, "
+                       "subtopic: 현안, require_keywords: [가나]}\n", encoding="utf-8")
+        cfg = load_config(cfg_p, [iss])
+        H = ["연번", "기사 제목", "부제목", "매체명", "지면번호", "발행일", "구분", "카테고리", "크기", "검색어", "기자", "기사 시리얼"]
+        rows = [
+            [1, "TV 편성표", "", "매일경제", "A21", D, "지면", "문화", "40 x 18㎝", "가나", "", "6001"],
+            [2, "[사설] 예산 심사 엄격히", "", "매일경제", "A35", D, "지면", "사설", "20 x 20㎝", "반도체", "", "6002"],
+            [3, "빅테크 어닝쇼크에 시장 불똥", "", "한국경제", "A1", D, "지면", "종합", "30 x 40㎝", "반도체", "기자A", "6003"],
+            [4, "코스피 3% 급락", "", "매일경제", "A2", D, "지면", "증권", "20 x 20㎝", "반도체", "기자B", "6004"],
+            [5, "코스피 반도체 약세", "", "한국경제", "A5", D, "지면", "증권", "20 x 20㎝", "반도체", "기자C", "6005"],
+            [6, "코스닥 반등 기대", "", "서울경제", "A6", D, "지면", "증권", "20 x 20㎝", "반도체", "기자D", "6006"],
+            [7, "코스피 가나전자 급등", "", "서울경제", "A7", D, "지면", "증권", "20 x 20㎝", "가나", "기자E", "6007"],
+            [8, "가나생명 신상품 출시", "", "매일경제", "A12", D, "지면", "금융", "20 x 20㎝", "반도체", "기자F", "6008"],
+            [9, "현대차 노조 파업 예고", "", "매일경제", "A13", D, "지면", "산업", "20 x 20㎝", "반도체", "기자G", "6009"],
+        ]
+        p = self.tmp / "mini4.xlsx"
+        pd.DataFrame([H] + rows).to_excel(p, header=False, index=False)
+        res = build_draft(read_export(p), cfg, date(2026, 11, 2))
+        sel = res.selected.set_index("key")
+        removed = dict(zip(res.removed["key"], res.removed["drop_reason"]))
+        ref = list(res.reference["key"])
+        self.assertIn("바이라인", removed["S:6001"], "기자명 없는 편성표는 기사 아님")
+        self.assertIn("S:6002", list(sel.index), "사설은 기자명 없어도 유지")
+        self.assertIn("S:6003", ref, "본문에서만 걸리면 1면이어도 참고")
+        self.assertEqual(sel.at["S:6004", "section"], "기타")
+        cap = [k for k in ("S:6004", "S:6005", "S:6006") if k in sel.index]
+        self.assertEqual(len(cap), 2, "증시·시황은 2건까지")
+        self.assertIn("S:6007", list(sel.index), "제목에 가나전자가 크게 들어가면 시황이어도 유지")
+        self.assertEqual(sel.at["S:6008", "section"], "관계사", "제목 일치가 본문 일치보다 우선")
+        self.assertNotEqual(sel.at["S:6009", "subtopic"] if "S:6009" in sel.index else "", "현안",
+                            "다른 회사 노조 기사는 현안 아님")
+
     def test_status_before_ready_time(self):
         res = build_draft(read_export(self.xlsx), self.cfg(), date(2026, 11, 2), now=datetime(2026, 11, 2, 6, 0))
         st = res.paper_status.set_index("매체")["상태"]

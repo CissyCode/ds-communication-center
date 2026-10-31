@@ -14,6 +14,8 @@ class Subtopic:
     name: str
     keywords: list[str]
     ordered: bool = False   # true면 keywords 순서가 소주제 안 배열 순서(예: 경쟁사 SK하이닉스 → 마이크론 → …)
+    max_items: int | None = None          # 이 소주제 추천 상한(예: 증시·시황 2건). 나머지는 '참고'
+    cap_exempt: list[str] = field(default_factory=list)  # 제목에 이 말이 있으면 상한에서 제외(예: 삼성전자)
 
 
 @dataclass
@@ -46,6 +48,7 @@ class Issue:
     subtopic: str | None = None
     bundle: bool = False      # 이 현안 기사들을 대표 뒤에 관련기사로 묶음(목차엔 대표 toc_max건만)
     max_items: int | None = None  # 보도자료 동일 보도처럼 추천 건수 상한(주요 매체순). 나머지는 '참고'로
+    require_keywords: list[str] = field(default_factory=list)  # 제목·부제목에 이 말이 있을 때만 현안으로 봄
 
     def active(self, on: date) -> bool:
         return on <= self.until
@@ -73,6 +76,9 @@ class Config:
     edition_markers: list[str]
     edition_similarity: float
     cluster_similarity: float
+    body_factor: float = 0.5          # 제목엔 없고 본문(검색어)에서만 걸린 기사의 점수 비율. 이 경우 1면·크기 가점 없음
+    require_byline: bool = False      # 기자명이 없으면 기사로 보지 않음(사설·칼럼 제외)
+    force_sections: list[dict] = field(default_factory=list)  # 제목에 이 말이 있으면 해당 소제목으로(예: 증시·부동산 → 기타)
     toc_max: int = 1                  # 묶음(같은 사안·연결기사)에서 목차에 표시할 건수
     alert_keywords: list[str] = field(default_factory=list)   # '우선 검토' 표시(배열과 별개)
     volume_range: tuple[int, int] | None = None               # 분량 참고 범위(자르지 않음)
@@ -157,11 +163,13 @@ def load_config(path: str | Path, extra: list[str | Path] | None = None) -> Conf
             boost=float(i.get("boost", 50)), pin_top=bool(i.get("pin_top", False)),
             section=i.get("section"), subtopic=i.get("subtopic"), bundle=bool(i.get("bundle", False)),
             max_items=int(i["max_items"]) if i.get("max_items") else None,
+            require_keywords=list(i.get("require_keywords") or []),
         ))
 
     sections = []
     for s in c.get("sections") or []:
-        subs = [Subtopic(t["name"], list(t.get("keywords") or []), bool(t.get("ordered", False)))
+        subs = [Subtopic(t["name"], list(t.get("keywords") or []), bool(t.get("ordered", False)),
+                         int(t["max_items"]) if t.get("max_items") else None, list(t.get("cap_exempt") or []))
                 for t in s.get("subtopics") or []]
         sections.append(Section(
             name=s["name"], keywords=list(s.get("keywords") or []), weight=float(s.get("weight", 50)),
@@ -197,6 +205,9 @@ def load_config(path: str | Path, extra: list[str | Path] | None = None) -> Conf
         edition_markers=list(dedup.get("edition_markers") or ["가판", "초판"]),
         edition_similarity=float(dedup.get("edition_similarity", 0.6)),
         cluster_similarity=float(dedup.get("cluster_similarity", 0.5)),
+        body_factor=float(c.get("body_factor", 0.5)),
+        require_byline=bool(c.get("require_byline", False)),
+        force_sections=list(c.get("force_sections") or []),
         toc_max=int(c.get("toc_max", 1)),
         alert_keywords=list(c.get("alert_keywords") or []),
         volume_range=tuple(c["volume_range"]) if c.get("volume_range") else None,
