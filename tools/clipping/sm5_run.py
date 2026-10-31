@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31r"
+VERSION = "2026-10-31s"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -587,22 +587,73 @@ def scrap_rows(win, seqs: list[int]) -> None:
     no_popup_or_stop(win, "[스크랩]")
 
 
+def _container_items(item) -> list:
+    """그룹(트리 항목) 아래 기사들을 화면 밖 것까지 순서대로 가져온다(가상 항목 실체화).
+
+    스크랩 목록은 화면에 보이는 기사만 자동화 도구에 알려 주므로, ItemContainer 패턴으로 차례로 찾고
+    VirtualizedItem 패턴으로 실제 항목을 만든다."""
+    import ctypes
+
+    from comtypes.automation import VARIANT
+    from pywinauto.controls.uiawrapper import UIAWrapper
+    from pywinauto.uia_defines import IUIA, get_elem_interface
+    from pywinauto.uia_element_info import UIAElementInfo
+
+    container = get_elem_interface(item.element_info.element, "ItemContainer")
+    null = ctypes.POINTER(IUIA().UIA_dll.IUIAutomationElement)()
+    out, prev = [], null
+    for _ in range(2000):
+        el = container.FindItemByProperty(prev, 0, VARIANT())
+        if not el:
+            break
+        out.append(el)
+        prev = el
+    wrappers = []
+    for el in out:
+        try:
+            get_elem_interface(el, "VirtualizedItem").Realize()
+        except Exception:
+            pass   # 이미 실체화된 항목
+        wrappers.append(UIAWrapper(UIAElementInfo(el)))
+    return wrappers
+
+
+def _group_articles(win, group: str) -> list:
+    item = group_tree_item(win, group)
+    if item.get_expand_state() != 1:
+        try:
+            item.expand()
+        except Exception:
+            find(item, auto_id="chkExpand").click_input()
+        time.sleep(0.6)
+        item = group_tree_item(win, group)
+    arts = [a for a in _container_items(item) if a.element_info.name == "ScrapMaster5.Article"]
+    return arts
+
+
 def reorder(win, group: str, current: list[str], desired: list[str]) -> None:
     """current: 지금 순서의 Serial 키 목록. desired: 원하는 순서. 뒤에서부터 [맨 위로]."""
     order = list(current)
-    top = need(win, "btnScrapListSelectedTop")
     uncheck_all_scraps(win)
-    for key in reversed(desired):
+    arts = _group_articles(win, group)
+    if len(arts) != len(order):
+        raise Stop(f"스크랩 목록에서 읽은 기사 수({len(arts)})가 그룹 엑셀({len(order)})과 다릅니다. 멈춥니다.")
+    log(f"정렬 시작: {len(desired)}건")
+    for n, key in enumerate(reversed(desired), 1):
         idx = order.index(key)
-        arts = articles_of(win, group)
+        arts = _group_articles(win, group)
         if len(arts) != len(order):
             raise Stop("정렬 중 그룹 기사 수가 바뀌었습니다. 멈춥니다.")
+        art = arts[idx]
         try:   # 화면 밖 기사는 먼저 보이게 스크롤
-            arts[idx].iface_scroll_item.ScrollIntoView()
-            time.sleep(0.2)
+            art.iface_scroll_item.ScrollIntoView()
+            time.sleep(0.3)
         except Exception:
             pass
-        cb = arts[idx].children(control_type="CheckBox")[0]
+        cbs = art.children(control_type="CheckBox")
+        if not cbs:
+            raise Stop(f"{idx + 1}번째 기사의 체크박스를 찾지 못했습니다.")
+        cb = cbs[0]
         if not cb.get_toggle_state():
             cb.click_input()
             time.sleep(0.3)
@@ -613,6 +664,8 @@ def reorder(win, group: str, current: list[str], desired: list[str]) -> None:
         time.sleep(0.4)
         order.insert(0, order.pop(idx))
         uncheck_all_scraps(win)
+        if n % 10 == 0:
+            log(f"정렬 진행 {n}/{len(desired)}")
 
 
 def main() -> int:
