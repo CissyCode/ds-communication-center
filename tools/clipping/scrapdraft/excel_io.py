@@ -25,6 +25,7 @@ ALIASES: dict[str, list[str]] = {
     "size": ["크기", "기사크기"],
     "reporter": ["기자", "기자명"],
     "keyword": ["검색어"],
+    "dup_search": ["중복검색"],   # 같은 기사를 잡은 다른 검색어 그룹(병합 검색 결과)
     "seq": ["연번", "순번"],
     "url": ["기사url", "url"],
     "media_class": ["매체분류"],
@@ -131,6 +132,9 @@ def read_export(path: str | Path) -> pd.DataFrame:
             rec["media"] = str(rec["media"] or "").strip()
             rec["kind"] = str(rec["kind"] or "").strip()
             rec["keyword"] = str(rec["keyword"] or "").strip()
+            dup = str(rec.get("dup_search") or "").strip()
+            if dup and dup.lower() != "nan":  # 분류 때 함께 보도록 검색어에 덧붙인다
+                rec["keyword"] = f"{rec['keyword']} {dup}".strip()
             rec["page_raw"], rec["page_no"] = parse_page(rec["page"])
             rec["date"] = parse_date(rec["date"])
             rec["size_cm2"] = parse_size(rec["size"])
