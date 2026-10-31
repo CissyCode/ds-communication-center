@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31p"
+VERSION = "2026-10-31q"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -269,11 +269,22 @@ def set_check(cb, on: bool) -> None:
         time.sleep(0.3)
 
 
+def click_visible(win, auto_ids) -> bool:
+    """여러 후보 중 화면에 보이는 버튼을 실제로 클릭(스크랩 목록 버튼은 '누르기 신호'에 반응하지 않음)."""
+    for aid in auto_ids:
+        btn = by_id(win, aid)
+        try:
+            if btn is not None and btn.is_visible() and btn.rectangle().width() > 0:
+                btn.click_input()
+                time.sleep(0.5)
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def uncheck_all_scraps(win) -> None:
-    btn = by_id(win, "btnScrapListDeSelect2") or by_id(win, "btnScrapListDeSelect")
-    if btn is not None:
-        press(btn)
-        time.sleep(0.4)
+    click_visible(win, ("btnScrapListDeSelect_T", "btnScrapListDeSelect2", "btnScrapListDeSelect"))
 
 
 # ---------- 저장 창 ----------
@@ -510,7 +521,9 @@ def export_group(win, group: str, path: Path) -> pd.DataFrame:
     uncheck_all_scraps(win)
     item = group_tree_item(win, group)
     cb = find(item, auto_id="cbScrapTreeGroup", control_type="CheckBox")
-    set_check(cb, True)
+    if not cb.get_toggle_state():
+        cb.click_input()          # 신호(toggle)는 화면만 바뀌고 프로그램 선택은 안 될 수 있어 실제 클릭
+        time.sleep(0.5)
     if not cb.get_toggle_state():
         raise Stop(f"스크랩 목록에서 '{group}' 그룹을 체크하지 못했습니다.")
     last_err = None
@@ -521,7 +534,8 @@ def export_group(win, group: str, path: Path) -> pd.DataFrame:
                 continue
         except Exception:
             continue
-        press(btn)
+        btn.click_input()         # 이 버튼은 '누르기 신호'에 반응하지 않아 실제 클릭
+        time.sleep(0.8)
         try:
             save_dialog(win, path, REQUIRED_COLS)
             break
@@ -565,9 +579,19 @@ def reorder(win, group: str, current: list[str], desired: list[str]) -> None:
         arts = articles_of(win, group)
         if len(arts) != len(order):
             raise Stop("정렬 중 그룹 기사 수가 바뀌었습니다. 멈춥니다.")
+        try:   # 화면 밖 기사는 먼저 보이게 스크롤
+            arts[idx].iface_scroll_item.ScrollIntoView()
+            time.sleep(0.2)
+        except Exception:
+            pass
         cb = arts[idx].children(control_type="CheckBox")[0]
-        set_check(cb, True)
-        press(top)
+        if not cb.get_toggle_state():
+            cb.click_input()
+            time.sleep(0.3)
+        if not cb.get_toggle_state():
+            raise Stop("정렬할 기사를 체크하지 못했습니다.")
+        if not click_visible(win, ("btnScrapListSelectedTop",)):
+            raise Stop("[맨 위로] 버튼이 보이지 않습니다.")
         time.sleep(0.4)
         order.insert(0, order.pop(idx))
         uncheck_all_scraps(win)
