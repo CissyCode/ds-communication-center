@@ -36,7 +36,7 @@ from scrapdraft.report import write_report
 from sm5_read import OUT, WINDOW_TITLE, by_id, expand_search_folders, read_keywords, read_popups, texts
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31l"
+VERSION = "2026-10-31m"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -343,10 +343,33 @@ def list_source_groups(win) -> list[str]:
             kw = t[0].strip()
             cnt = next((x for x in t if re.fullmatch(r"\d+ / [\d-]+", x)), "0 / 0")
             media = next((m.group(1) for x in t for m in [re.search(r"매체:(\d+)/", x)] if m), "")
-            if int(cnt.split("/")[0]) > 0:
-                found.append((kw, media))
-    names = [k for k, _ in found]
-    return [f"{k}@{m}" if names.count(k) > 1 and m else k for k, m in found]
+            n = int(cnt.split("/")[0])
+            if n > 0:
+                found.append((kw, media, n))
+    names = [k for k, _, _ in found]
+    specs = []
+    for k, m, n in found:
+        spec = f"{k}@{m}" if names.count(k) > 1 and m else k
+        GROUP_COUNTS[spec] = n
+        specs.append(spec)
+    return specs
+
+
+GROUP_COUNTS: dict[str, int] = {}   # 검색어 그룹별 지면 건수(목록에서 읽은 값)
+
+
+def cache_index(target: date) -> tuple[Path, dict]:
+    """같은 날 이전 실행에서 저장한 검색어 그룹별 엑셀. 건수가 그대로면 다시 저장하지 않고 재사용."""
+    import json
+    d = OUT / "cache" / target.isoformat()
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / "index.json"
+    return d, (json.loads(f.read_text(encoding="utf-8")) if f.exists() else {})
+
+
+def save_cache_index(d: Path, index: dict) -> None:
+    import json
+    (d / "index.json").write_text(json.dumps(index, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
 def open_source_group(win, spec: str) -> int:
@@ -505,19 +528,33 @@ def main() -> int:
             log(f"검색어 그룹 {len(sources)}개(지면 결과 있는 것)를 후보로 사용")
         parts, src = [], None
         skipped = []
+        cdir, cidx = cache_index(target)
         for i, spec in enumerate(sources, 1):
-            try:
-                n = open_source_group(win, spec)
-            except SkipGroup as e:
-                if len(sources) == 1:
-                    raise
-                log(f"건너뜀: {e}")
-                skipped.append(spec)
-                continue
-            log(f"후보 그룹 '{spec}' 지면 {n}건 — 엑셀 저장")
-            if n == 0:
-                continue
-            src = export_search(win, run_dir / f"검색결과{i}_{stamp}.xlsx", args.keep_options)
+            cached = cidx.get(spec)
+            tree_n = GROUP_COUNTS.get(spec)
+            if cached and tree_n and cached.get("count") == tree_n and (cdir / cached["file"]).exists():
+                n = tree_n
+                src = cdir / cached["file"]
+                log(f"후보 그룹 '{spec}' 지면 {n}건 — 변화 없음, 직전 저장본 사용")
+            else:
+                try:
+                    n = open_source_group(win, spec)
+                except SkipGroup as e:
+                    if len(sources) == 1:
+                        raise
+                    log(f"건너뜀: {e}")
+                    skipped.append(spec)
+                    continue
+                if n == 0:
+                    log(f"후보 그룹 '{spec}' 지면 0건 — 건너뜀")
+                    continue
+                log(f"후보 그룹 '{spec}' 지면 {n}건 — 엑셀 저장")
+                src = export_search(win, run_dir / f"검색결과{i}_{stamp}.xlsx", args.keep_options)
+                import shutil
+                name = f"g{abs(hash(spec)) % 10**8}.xlsx"
+                shutil.copyfile(src, cdir / name)
+                cidx[spec] = {"count": n, "file": name}
+                save_cache_index(cdir, cidx)
             part = read_export(src)
             cols = set(part.attrs.get("has_columns", []))
             if not {"seq", "serial"} <= cols:
