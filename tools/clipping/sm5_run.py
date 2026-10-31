@@ -36,7 +36,7 @@ from scrapdraft.report import write_report
 from sm5_read import OUT, by_id, expand_search_folders, main_window, read_keywords, read_popups, texts
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31f"
+VERSION = "2026-10-31g"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -240,11 +240,45 @@ def save_dialog(win, path: Path, columns: list[str], timeout=10) -> Path:
 
     end = time.time() + 30
     while time.time() < end:
+        dismiss_notices(win)
         if path.exists() and path.stat().st_size > 0:
             time.sleep(1.0)
+            dismiss_notices(win)
             return path
         time.sleep(0.5)
     raise Stop(f"엑셀 파일이 만들어지지 않았습니다: {path}")
+
+
+# 저장 뒤 뜨는 알림 창에서 누를 버튼 우선순위('파일을 여시겠습니까?'에는 열지 않음)
+NOTICE_BUTTONS = ["아니요", "아니오", "아니요(N)", "아니오(N)", "No", "확인", "OK", "닫기"]
+
+
+def dismiss_notices(win) -> None:
+    """본 창 외에 같은 프로세스의 작은 알림 창(메시지 상자)이 있으면 내용을 기록하고 닫는다."""
+    import win32gui
+    import win32process
+    pid = win.element_info.process_id
+    main = win.handle
+    hwnds = []
+    win32gui.EnumWindows(lambda h, acc: acc.append(h) if win32gui.IsWindowVisible(h) else None, hwnds)
+    for h in hwnds:
+        if h == main or win32process.GetWindowThreadProcessId(h)[1] != pid:
+            continue
+        title = win32gui.GetWindowText(h)
+        if title == "다른 이름으로 파일 저장" or win32gui.GetClassName(h) == "Internet Explorer_Hidden":
+            continue
+        try:
+            dlg = Desktop(backend="uia").window(handle=h).wrapper_object()
+            buttons = {b.window_text(): b for b in dlg.descendants(control_type="Button")}
+            msg = " / ".join(t.window_text() for t in dlg.descendants(control_type="Text") if t.window_text())
+        except Exception:
+            continue
+        for name in NOTICE_BUTTONS:
+            if name in buttons:
+                log(f"알림 창 '{title}': {msg[:120]} → [{name}]")
+                press(buttons[name])
+                time.sleep(0.5)
+                break
 
 
 # ---------- 단계 ----------

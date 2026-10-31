@@ -27,10 +27,12 @@ OUT = Path(__file__).resolve().parent / "output"
 
 
 def main_window():
-    w = Desktop(backend="uia").window(title=WINDOW_TITLE)
-    if not w.exists(timeout=3):
+    """'스크랩마스터 5' 제목의 창 중 가장 큰 창(본 창). 같은 제목의 알림 창이 떠 있어도 헷갈리지 않게 핸들로 고정."""
+    wins = [w for w in Desktop(backend="uia").windows(title=WINDOW_TITLE)]
+    if not wins:
         sys.exit(f"'{WINDOW_TITLE}' 창을 찾지 못했습니다. 스크랩마스터가 켜져 있고 터미널이 관리자 권한인지 확인해 주세요.")
-    return w
+    main = max(wins, key=lambda w: w.rectangle().width() * w.rectangle().height())
+    return Desktop(backend="uia").window(handle=main.handle)
 
 
 def by_id(win, auto_id: str):
