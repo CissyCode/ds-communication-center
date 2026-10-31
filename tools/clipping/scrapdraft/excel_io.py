@@ -64,6 +64,17 @@ def parse_size(v) -> float | None:
     return nums[0]
 
 
+def parse_dims(v) -> tuple[float | None, float | None]:
+    """'12.3 x 50.8㎝' → (가로, 세로) cm. 면적만 있으면 (None, None)."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None, None
+    s = str(v)
+    nums = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", s)]
+    if re.search(r"[x×*]", s, re.I) and len(nums) >= 2:
+        return nums[0], nums[1]
+    return None, None
+
+
 def parse_page(v) -> tuple[str, int | None]:
     """원문 면 표기와 정렬용 숫자. 'A1'·'1면'·'B3' 모두 숫자만 뽑는다."""
     if v is None or (isinstance(v, float) and pd.isna(v)):
@@ -138,12 +149,13 @@ def read_export(path: str | Path) -> pd.DataFrame:
             rec["page_raw"], rec["page_no"] = parse_page(rec["page"])
             rec["date"] = parse_date(rec["date"])
             rec["size_cm2"] = parse_size(rec["size"])
+            rec["width_cm"], rec["height_cm"] = parse_dims(rec["size"])
             rec["is_subhead"] = not rec["media"] and not rec["serial"]
             rec["key"] = article_key(rec)
             records.append(rec)
         df = pd.DataFrame.from_records(records)
         if df.empty:
-            df = pd.DataFrame(columns=FIELDS + ["page_raw", "page_no", "size_cm2", "is_subhead", "key"])
+            df = pd.DataFrame(columns=FIELDS + ["page_raw", "page_no", "size_cm2", "width_cm", "height_cm", "is_subhead", "key"])
         df.attrs["source"] = str(path)
         df.attrs["has_columns"] = sorted({c for c in cols if c})
         return df

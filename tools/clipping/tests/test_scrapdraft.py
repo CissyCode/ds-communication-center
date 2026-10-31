@@ -116,6 +116,22 @@ class ScrapDraftTest(unittest.TestCase):
         self.assertEqual(st["세계일보"], ST_UNKNOWN)
         self.assertTrue(res.overall.startswith("부분 완료"))
 
+    def test_evening_and_shape(self):
+        """석간은 전날 자가 정상, 같은 사안이면 세로형(3~4단) 기사가 대표."""
+        p = self.tmp / "mini.xlsx"
+        pd.DataFrame([HEADER,
+                      [1, "반도체 수출 사상 최대 기록", "", "매일경제", "A10", D, "지면", "경제", "40.0 x 10.0㎝", "반도체", "2001"],
+                      [2, "반도체 수출 사상 최대 기록 달성", "", "매일경제", "A12", D, "지면", "경제", "15.0 x 30.0㎝", "반도체", "2002"],
+                      [3, "메모리 가격 반등 신호", "", "문화일보", "5", "2026-11-01", "지면", "경제", "20 x 20㎝", "반도체", "2003"],
+                      ]).to_excel(p, header=False, index=False)
+        res = build_draft(read_export(p), self.cfg(), date(2026, 11, 2))
+        sel = res.selected.set_index("key")
+        keys = list(res.selected["key"])
+        self.assertLess(keys.index("S:2002"), keys.index("S:2001"), "세로형이 대표")
+        self.assertEqual(sel.at["S:2001", "toc"], "숨김(관련기사)")
+        self.assertIn("세로형", sel.at["S:2002", "reason"])
+        self.assertNotIn("발행일", sel.at["S:2003", "note"], "석간 전날 자는 정상")
+
     def test_status_before_ready_time(self):
         res = build_draft(read_export(self.xlsx), self.cfg(), date(2026, 11, 2), now=datetime(2026, 11, 2, 6, 0))
         st = res.paper_status.set_index("매체")["상태"]

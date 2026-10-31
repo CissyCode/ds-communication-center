@@ -70,8 +70,22 @@ class Config:
     edition_markers: list[str]
     edition_similarity: float
     cluster_similarity: float
+    evening_papers: list[str] = field(default_factory=list)   # 석간: 대상일 전날 발행분을 정상으로 봄
+    shape_bonus: float = 0.0          # 3~4단 폭 세로형 기사 가점
+    shape_min_width: float = 9.0
+    shape_max_width: float = 20.0
+    shape_min_ratio: float = 1.2      # 세로/가로
     holidays: dict[str, list[str]] = field(default_factory=dict)
     sha256: str = ""
+
+    def good_shape(self, w, h) -> bool:
+        try:
+            w, h = float(w), float(h)
+        except (TypeError, ValueError):
+            return False
+        if not (w == w and h == h) or w <= 0:  # NaN 방지
+            return False
+        return self.shape_min_width <= w <= self.shape_max_width and h / w >= self.shape_min_ratio
 
     def papers_for(self, d: date) -> list[Paper]:
         return self.weekend_papers if d.weekday() >= 5 and self.weekend_papers else self.weekday_papers
@@ -174,6 +188,11 @@ def load_config(path: str | Path, extra: list[str | Path] | None = None) -> Conf
         edition_markers=list(dedup.get("edition_markers") or ["가판", "초판"]),
         edition_similarity=float(dedup.get("edition_similarity", 0.6)),
         cluster_similarity=float(dedup.get("cluster_similarity", 0.5)),
+        evening_papers=list(c.get("evening_papers") or []),
+        shape_bonus=float((c.get("shape") or {}).get("bonus", 0)),
+        shape_min_width=float((c.get("shape") or {}).get("min_width_cm", 9)),
+        shape_max_width=float((c.get("shape") or {}).get("max_width_cm", 20)),
+        shape_min_ratio=float((c.get("shape") or {}).get("min_ratio", 1.2)),
         holidays={str(k): list(v) for k, v in (c.get("holidays") or {}).items()},
         sha256=digest.hexdigest(),
     )

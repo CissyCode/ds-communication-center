@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
 import pandas as pd
 
@@ -87,8 +87,12 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             df = df[df["paper"].notna()].copy()
         else:  # 가판 확인 대상 외 매체(지역지 등)도 후보로 둔다
             df["paper"] = df["paper"].fillna(df["base_media"])
-        other_day = df["date"].notna() & (df["date"] != target_date)
-        df.loc[other_day, "note"] += "발행일이 대상일과 다름; "
+        prev = target_date - timedelta(days=1)
+        evening = df["paper"].isin(cfg.evening_papers)
+        ok_day = (~evening & (df["date"] == target_date)) | (evening & (df["date"] == prev))
+        other_day = df["date"].notna() & ~ok_day
+        df.loc[other_day & evening, "note"] += "석간인데 전날 자가 아님; "
+        df.loc[other_day & ~evening, "note"] += "발행일이 대상일과 다름; "
     else:
         df["paper"] = []
 
@@ -156,6 +160,9 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             score += cfg.early_page_bonus
         if r["size_cm2"]:
             score += cfg.size_bonus_per_100cm2 * r["size_cm2"] / 100
+        if cfg.shape_bonus and cfg.good_shape(r.get("width_cm"), r.get("height_cm")):
+            score += cfg.shape_bonus
+            why.append("세로형(3~4단)")
         scores.append(round(score, 1)); sections.append(sec); subs.append(sub); reasons.append("; ".join(why)); pins.append(pin)
         bundles.append(bundle)
     df["score"], df["section"], df["subtopic"], df["reason"], df["pin"] = scores, sections, subs, reasons, pins
@@ -243,7 +250,9 @@ def classify(r, cfg: Config):
 
 
 def order_articles(sel: pd.DataFrame, cfg: Config) -> pd.DataFrame:
-    """소제목 순서 → 현안 고정 → 소주제 순서 → 매체 우선순위 → 면 → 크기. 유사 묶음은 대표 뒤에 붙인다."""
+    """소제목 → 현안 고정 → 소주제 → 매체 우선순위 → 세로형 여부 → 면 → 크기. 같은 사안 묶음은 대표 뒤에 붙인다.
+
+    같은 사안(묶음) 안에서는 이 정렬의 첫 기사가 대표가 되므로, 매체 중요도가 같으면 세로형 기사가 대표가 된다."""
     if sel.empty:
         sel["rank"] = []
         return sel
@@ -258,7 +267,10 @@ def order_articles(sel: pd.DataFrame, cfg: Config) -> pd.DataFrame:
     sel["_media"] = sel["paper"].map(cfg.media_rank)
     sel["_page"] = sel["page_no"].fillna(999)
     sel["_size"] = -sel["size_cm2"].fillna(0)
-    sel = sel.sort_values(["_sec", "pin", "_sub", "_media", "_page", "_size"], ascending=[True, False, True, True, True, True])
+    sel["_shape"] = [0 if cfg.good_shape(w, h) else 1 for w, h in
+                     zip(sel.get("width_cm", [None] * len(sel)), sel.get("height_cm", [None] * len(sel)))]
+    sel = sel.sort_values(["_sec", "pin", "_sub", "_media", "_shape", "_page", "_size"],
+                          ascending=[True, False, True, True, True, True, True])
 
     out, seen, toc = [], set(), {}
     rows = list(sel.index)
@@ -274,7 +286,7 @@ def order_articles(sel: pd.DataFrame, cfg: Config) -> pd.DataFrame:
                 if j not in seen and sel.at[j, "cluster"] == c and (same_sec or c.startswith("현안:")):
                     out.append(j); seen.add(j)
                     toc[j] = "숨김(관련기사)"
-    sel = sel.loc[out].drop(columns=["_sec", "_sub", "_media", "_page", "_size"])
+    sel = sel.loc[out].drop(columns=["_sec", "_sub", "_media", "_shape", "_page", "_size"])
     sel["rank"] = range(1, len(sel) + 1)
     sel["toc"] = [toc[i] for i in out]
     return sel

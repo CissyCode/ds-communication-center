@@ -236,18 +236,23 @@ def refresh_search(win, wait_s: int) -> list[str]:
     return read_keywords(win)
 
 
-def open_source_group(win, keyword: str) -> int:
+def open_source_group(win, spec: str) -> int:
+    """spec: '검색어' 또는 '검색어@매체수'(같은 검색어가 여러 개일 때, 예: '삼성 반도체@3' = 석간 3개 매체용)."""
+    keyword, _, media_n = spec.partition("@")
     tree = need(win, "treeSearchResultGroups")
     target = None
     for item in tree.descendants(control_type="TreeItem"):
         if item.element_info.name != "ScrapMaster5.SearchGroup":
             continue
         t = texts(item)
-        if t and t[0].strip() == keyword:
-            target = item
-            break
+        if not t or t[0].strip() != keyword:
+            continue
+        if media_n and not any(f"매체:{media_n}/" in x for x in t):
+            continue
+        target = item
+        break
     if target is None:
-        raise Stop(f"검색어 그룹 '{keyword}'을 찾지 못했습니다.")
+        raise Stop(f"검색어 그룹 '{spec}'을 찾지 못했습니다.")
     label = [x for x in texts(target) if x.strip() == keyword]
     (target.child_window(title=label[0], control_type="Text").wrapper_object() if label else target).click_input()
     time.sleep(2.0)
@@ -323,7 +328,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", help="대상 일자(기본 오늘)")
     ap.add_argument("--group", help="검토 그룹 이름(기본 자동검토_MMDD)")
-    ap.add_argument("--source", default="삼성 반도체", help="후보로 쓸 검색어 그룹 이름")
+    ap.add_argument("--source", action="append",
+                    help="후보로 쓸 검색어 그룹(여러 번 지정 가능). 같은 이름이 여럿이면 '이름@매체수'. 기본 '삼성 반도체'")
     ap.add_argument("--until", choices=["export", "scrap", "order"], default="order")
     ap.add_argument("--config", default=str(HERE / "config.yaml"))
     ap.add_argument("--issues", default=str(HERE / "issues.yaml"))
@@ -356,17 +362,27 @@ def main() -> int:
         (run_dir / "keywords.txt").write_text("\n".join(kw_lines), encoding="utf-8")
         log(f"검색어 {len(kw_lines)}개 건수 기록")
 
-        # 2) 후보 내보내기
-        n = open_source_group(win, args.source)
-        log(f"후보 그룹 '{args.source}' 지면 {n}건 — 엑셀 저장")
-        src = export_search(win, run_dir / f"검색결과_{stamp}.xlsx", args.keep_options)
-        df = read_export(src)
-        # [지면기사] 탭에서 저장했으므로 '구분' 항목이 없으면 지면으로 본다
-        df["kind"] = df["kind"].where(df["kind"].astype(str).str.strip() != "", "지면")
-        if len(df) != n:
-            raise Stop(f"엑셀 행 수({len(df)})와 화면 건수({n})가 다릅니다.")
-        if df["seq"].isna().any():
-            raise Stop("엑셀에 '연번'이 없습니다. 저장 항목을 확인해 주세요.")
+        # 2) 후보 내보내기(검색어 그룹별)
+        sources = args.source or ["삼성 반도체"]
+        parts, src = [], None
+        for i, spec in enumerate(sources, 1):
+            n = open_source_group(win, spec)
+            log(f"후보 그룹 '{spec}' 지면 {n}건 — 엑셀 저장")
+            if n == 0:
+                continue
+            src = export_search(win, run_dir / f"검색결과{i}_{stamp}.xlsx", args.keep_options)
+            part = read_export(src)
+            if len(part) != n:
+                raise Stop(f"'{spec}' 엑셀 행 수({len(part)})와 화면 건수({n})가 다릅니다.")
+            if part["seq"].isna().any():
+                raise Stop("엑셀에 '연번'이 없습니다. 저장 항목을 확인해 주세요.")
+            # [지면기사] 탭에서 저장했으므로 '구분' 항목이 없으면 지면으로 본다
+            part["kind"] = part["kind"].where(part["kind"].astype(str).str.strip() != "", "지면")
+            part["source"] = spec
+            parts.append(part)
+        if not parts:
+            raise Stop("후보 검색어 그룹에 지면 기사가 없습니다.")
+        df = pd.concat(parts, ignore_index=True)  # 같은 기사는 엔진이 Serial로 1건으로 합침(먼저 나온 그룹 기준)
 
         # 3) 엔진
         res = build_draft(df, cfg, target)
@@ -374,7 +390,7 @@ def main() -> int:
         new = ledger.record_candidates(run_id, target, res.selected)
         res.selected["new"] = res.selected["key"].map(lambda k: "신규" if k in new else "")
         report = write_report(run_dir / f"검토초안_{target}_run{run_id}.xlsx", res, {
-            "대상 일자": target.isoformat(), "실행 번호": run_id, "후보 그룹": args.source, "검토 그룹": group,
+            "대상 일자": target.isoformat(), "실행 번호": run_id, "후보 그룹": ", ".join(sources), "검토 그룹": group,
             "입력 기사 수": len(df), "추천": len(res.selected), "전체 상태": res.overall,
         })
         log(f"추천 {len(res.selected)}건 / 참고 {len(res.reference)} / 제외·중복 {len(res.removed)} — {report.name}")
@@ -393,12 +409,18 @@ def main() -> int:
         todo = res.selected[~res.selected["key"].isin(have)]
         log(f"검토 그룹 기존 {n_before}건, 새로 담을 {len(todo)}건")
 
-        if len(todo):
+        for spec in sources:
+            part = todo[todo["source"] == spec]
+            if part.empty:
+                continue
+            open_source_group(win, spec)
             select_group(win, group)
-            scrap_rows(win, [int(float(s)) for s in todo["seq"]])
-            n_after = group_count(win, group) or 0
-            if n_after - n_before != len(todo):
-                raise Stop(f"그룹 건수 증가 {n_after - n_before}건 ≠ 기대 {len(todo)}건. 화면을 확인해 주세요.")
+            n_b = group_count(win, group) or 0
+            scrap_rows(win, [int(float(s)) for s in part["seq"]])
+            n_a = group_count(win, group) or 0
+            if n_a - n_b != len(part):
+                raise Stop(f"'{spec}' 담기: 그룹 건수 증가 {n_a - n_b}건 ≠ 기대 {len(part)}건. 화면을 확인해 주세요.")
+            log(f"'{spec}'에서 {len(part)}건 담음")
 
         # 5) 검증
         after = export_group(win, group, run_dir / f"검토그룹_후_{stamp}.xlsx")

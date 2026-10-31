@@ -49,3 +49,5 @@ exclude_keywords: [부고, 전면광고, 지면광고]
 # 카테고리가 이것이면 제외 후보(예: '삼성' 검색어에 걸린 야구 기사, 광고)
 exclude_categories: [광고, 스포츠]
 scoring: {min_score: 40, front_page_bonus: 30, early_page_bonus: 10, early_page_until: 5, size_bonus_per_100cm2: 2}
+evening_papers: [문화일보]
+shape: {bonus: 8, min_width_cm: 9, max_width_cm: 20, min_ratio: 1.2}
