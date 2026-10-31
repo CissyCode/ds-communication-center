@@ -236,7 +236,7 @@ def save_dialog(win, path: Path, columns: list[str], timeout=10) -> Path:
     edit = find(dlg, auto_id="1148", control_type="Edit")
     edit.set_edit_text(str(path))
     time.sleep(0.2)
-    find(dlg, auto_id="1", control_type="Button").click()
+    press(find(dlg, auto_id="1", control_type="Button"))
 
     end = time.time() + 30
     while time.time() < end:
