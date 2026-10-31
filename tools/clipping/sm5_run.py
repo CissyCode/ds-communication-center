@@ -33,10 +33,10 @@ from scrapdraft.engine import build_draft
 from scrapdraft.excel_io import file_sha256, read_export
 from scrapdraft.ledger import Ledger
 from scrapdraft.report import write_report
-from sm5_read import OUT, by_id, expand_search_folders, main_window, read_keywords, read_popups, texts
+from sm5_read import OUT, WINDOW_TITLE, by_id, expand_search_folders, read_keywords, read_popups, texts
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31h"
+VERSION = "2026-10-31i"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -60,6 +60,15 @@ def log(msg: str) -> None:
 
 
 # ---------- 화면 요소 ----------
+
+def main_window():
+    """'스크랩마스터 5' 제목 창 중 가장 큰 창을 핸들로 고정(같은 제목의 알림 창과 헷갈리지 않게)."""
+    wins = list(Desktop(backend="uia").windows(title=WINDOW_TITLE))
+    if not wins:
+        sys.exit(f"'{WINDOW_TITLE}' 창을 찾지 못했습니다. 스크랩마스터가 켜져 있고 터미널이 관리자 권한인지 확인해 주세요.")
+    main = max(wins, key=lambda w: w.rectangle().width() * w.rectangle().height())
+    return Desktop(backend="uia").window(handle=main.handle)
+
 
 def press(btn) -> None:
     """버튼 누르기. 자동화 '누르기' 신호(Invoke)를 받지 않는 버튼은 화면 위치를 마우스로 클릭."""
