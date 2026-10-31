@@ -36,6 +36,7 @@ from scrapdraft.report import write_report
 from sm5_read import OUT, by_id, main_window, read_keywords, read_popups, texts
 
 HERE = Path(__file__).resolve().parent
+VERSION = "2026-10-31d"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -59,6 +60,18 @@ def log(msg: str) -> None:
 
 
 # ---------- 화면 요소 ----------
+
+def find(elem, auto_id: str | None = None, title: str | None = None, control_type: str | None = None):
+    """요소(wrapper) 안에서 하위 요소 찾기. 창이 아닌 요소에는 child_window가 없어서 직접 훑는다."""
+    for c in elem.descendants(control_type=control_type) if control_type else elem.descendants():
+        ei = c.element_info
+        if auto_id is not None and ei.automation_id != auto_id:
+            continue
+        if title is not None and c.window_text() != title:
+            continue
+        return c
+    raise Stop(f"하위 요소를 찾지 못했습니다(auto_id={auto_id}, title={title}, type={control_type}).")
+
 
 def need(win, auto_id: str):
     e = by_id(win, auto_id)
@@ -154,7 +167,7 @@ def articles_of(win, group: str) -> list:
     item = group_tree_item(win, group)
     kids = [k for k in item.children(control_type="TreeItem") if k.element_info.name == "ScrapMaster5.Article"]
     if not kids and (group_count(win, group) or 0) > 0:
-        exp = item.child_window(auto_id="chkExpand").wrapper_object()
+        exp = find(item, auto_id="chkExpand")
         exp.click_input()
         time.sleep(0.6)
         kids = [k for k in item.children(control_type="TreeItem") if k.element_info.name == "ScrapMaster5.Article"]
@@ -195,7 +208,7 @@ def save_dialog(win, path: Path, columns: list[str], timeout=10) -> Path:
         raise Stop("'다른 이름으로 파일 저장' 창이 뜨지 않았습니다.")
 
     try:  # 편집 목차 저장 창에만 있는 선택지. 스크랩 목록·검색결과 저장 창에서는 숨겨져 있음
-        rb = dlg.child_window(auto_id="rbCustom", control_type="RadioButton").wrapper_object()
+        rb = find(dlg, auto_id="rbCustom", control_type="RadioButton")
         if rb.is_visible() and rb.is_enabled():
             rb.select()
             time.sleep(0.2)
@@ -211,10 +224,10 @@ def save_dialog(win, path: Path, columns: list[str], timeout=10) -> Path:
     missing = wanted - found
     if missing & set(REQUIRED_COLS):
         raise Stop(f"저장 창에 필요한 항목이 없습니다: {sorted(missing)}")
-    edit = dlg.child_window(auto_id="1148", control_type="Edit").wrapper_object()
+    edit = find(dlg, auto_id="1148", control_type="Edit")
     edit.set_edit_text(str(path))
     time.sleep(0.2)
-    dlg.child_window(auto_id="1", control_type="Button").wrapper_object().click()
+    find(dlg, auto_id="1", control_type="Button").click()
 
     end = time.time() + 30
     while time.time() < end:
@@ -254,7 +267,7 @@ def open_source_group(win, spec: str) -> int:
     if target is None:
         raise Stop(f"검색어 그룹 '{spec}'을 찾지 못했습니다.")
     label = [x for x in texts(target) if x.strip() == keyword]
-    (target.child_window(title=label[0], control_type="Text").wrapper_object() if label else target).click_input()
+    (find(target, title=label[0], control_type="Text") if label else target).click_input()
     time.sleep(2.0)
     kw = by_id(win, "tbCurrentSearchResultKeywordInfo1")
     if kw is None or kw.window_text().strip() != keyword:
@@ -282,7 +295,7 @@ def export_search(win, path: Path, keep_options: bool) -> Path:
 def export_group(win, group: str, path: Path) -> pd.DataFrame:
     uncheck_all_scraps(win)
     item = group_tree_item(win, group)
-    set_check(item.child_window(auto_id="cbScrapTreeGroup", control_type="CheckBox").wrapper_object(), True)
+    set_check(find(item, auto_id="cbScrapTreeGroup", control_type="CheckBox"), True)
     need(win, "btnScrapList_SaveToExcelFile_T").click()
     save_dialog(win, path, REQUIRED_COLS)
     uncheck_all_scraps(win)
@@ -349,6 +362,7 @@ def main() -> int:
     cfg = load_config(args.config, extras)
     ledger = Ledger(OUT / "ledger.sqlite")
 
+    log(f"sm5_run {VERSION}")
     win = main_window()
     win.set_focus()
     try:
