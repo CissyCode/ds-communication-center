@@ -29,6 +29,7 @@ class Section:
     preferred_media: list[str] = field(default_factory=list)  # 사설·칼럼 우선 매체(그 외는 점수 감점)
     other_media_factor: float = 0.8
     other_media_require: list[str] = field(default_factory=list)  # 우선 매체 외 사설·칼럼도 이 주제면 포함
+    topic_first: list[str] = field(default_factory=list)  # 이 소제목 안에서 이 주제를 먼저(예: 칼럼·사설의 반도체·AI)
     require_keywords: list[str] = field(default_factory=list)  # 이 소제목은 이 말(제목·부제목·검색어)이 있을 때만 추천
 
 
@@ -86,6 +87,9 @@ class Config:
     title_only_keywords: list[str] = field(default_factory=list)  # 부제목에만 있으면 분류 단서로 쓰지 않는 말
     mask_words: list[str] = field(default_factory=list)  # 분류 전에 지우는 말(예: '인텔리빅스'가 '인텔'로 잡히지 않게 '인텔리')
     hints: list[dict] = field(default_factory=list)   # 제목에 이 말이 있으면 '확인 메모'만 남김(위치는 바꾸지 않음)
+    bundle_max_other: int | None = None   # 당사 기사가 아닌 같은 사안 묶음은 이 건수까지만(주요 매체순)
+    own_sections: list[str] = field(default_factory=list)       # 당사로 보는 소제목(예: 삼성)
+    own_subtopic_prefixes: list[str] = field(default_factory=list)  # 당사로 보는 소주제 앞글자(예: DS)
     toc_max: int = 1                  # 묶음(같은 사안·연결기사)에서 목차에 표시할 건수
     alert_keywords: list[str] = field(default_factory=list)   # '우선 검토' 표시(배열과 별개)
     volume_range: tuple[int, int] | None = None               # 분량 참고 범위(자르지 않음)
@@ -185,6 +189,7 @@ def load_config(path: str | Path, extra: list[str | Path] | None = None) -> Conf
             preferred_media=list(s.get("preferred_media") or []),
             other_media_factor=float(s.get("other_media_factor", 0.8)),
             other_media_require=list(s.get("other_media_require") or []),
+            topic_first=list(s.get("topic_first") or []),
             require_keywords=list(s.get("require_keywords") or []),
         ))
 
@@ -222,6 +227,9 @@ def load_config(path: str | Path, extra: list[str | Path] | None = None) -> Conf
         title_only_keywords=list(c.get("title_only_keywords") or []),
         mask_words=list(c.get("mask_words") or []),
         hints=list(c.get("hints") or []),
+        bundle_max_other=int(c["bundle_max_other"]) if c.get("bundle_max_other") else None,
+        own_sections=list(c.get("own_sections") or []),
+        own_subtopic_prefixes=list(c.get("own_subtopic_prefixes") or []),
         toc_max=int(c.get("toc_max", 1)),
         alert_keywords=list(c.get("alert_keywords") or []),
         volume_range=tuple(c["volume_range"]) if c.get("volume_range") else None,

@@ -275,7 +275,8 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
     # 같은 기업 묶음(bundle_by_entity): 제목이 달라도 같은 소주제·같은 기업 기사는 한 묶음
     ent_sub = {(sec.name, st.name): st for sec in cfg.sections for st in sec.subtopics if st.bundle_by_entity}
     if ent_sub:
-        live2 = df[(df["drop_reason"] == "") & (df["cluster"] == "")]
+        live2 = df[(df["drop_reason"] == "") & (df["cluster"] == "")
+                   & ~df["reason"].str.contains("본문(검색어)", regex=False)]
         for (sec, sub, rk), g in live2.groupby(["section", "subtopic", "subrank"]):
             st = ent_sub.get((sec, sub))
             if st is None or len(g) < 2:
@@ -330,15 +331,36 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             members = members[~members["title"].map(lambda t: bool(_hits(t, st.cap_exempt)))]
             gkey = members.apply(lambda r: r["cluster"] or f"_{r.name}", axis=1)
             sizes = gkey.value_counts()
-            best = members.assign(_g=gkey, _n=gkey.map(sizes)).groupby("_g").agg(n=("_n", "first"), sc=("score", "max"))
-            keep = set(best.sort_values(["n", "sc"], ascending=False).index[: st.max_items])
+            best = members.assign(_g=gkey, _n=gkey.map(sizes), _m=members["paper"].map(cfg.media_rank)) \
+                .groupby("_g").agg(n=("_n", "first"), rk=("subrank", "min"), m=("_m", "min"), sc=("score", "max"))
+            best = best.sort_values(["n", "rk", "m", "sc"], ascending=[False, True, True, False])
+            keep = set(best.index[: st.max_items])
             extra = members[~gkey.isin(keep)]
             if len(extra):
                 extra = extra.copy()
                 extra["note"] += f"'{sec.name}/{st.name}' 상한 {st.max_items}건 초과; "
                 reference = pd.concat([reference, extra])
                 selected = order_articles(selected.drop(extra.index), cfg)
+    if cfg.bundle_max_other:
+        def own(r) -> bool:
+            return r["section"] in cfg.own_sections or any(str(r["subtopic"]).startswith(p) for p in cfg.own_subtopic_prefixes)
+        drop = []
+        for c, g in selected[selected["cluster"] != ""].groupby("cluster", sort=False):
+            if c.startswith("현안:") or g.apply(own, axis=1).any():
+                continue
+            g = g.sort_values("rank")
+            drop += list(g.index[cfg.bundle_max_other:])
+        if drop:
+            extra = selected.loc[drop].copy()
+            extra["drop_reason"] = f"같은 사안 {cfg.bundle_max_other}건 초과(당사 기사 아님, 주요 매체순)"
+            removed = pd.concat([removed, extra])
+            selected = order_articles(selected.drop(drop), cfg)
     flag_same_media_runs(selected)
+    # 묶음 표시를 실제 추천 건수로 고침(상한으로 줄어든 경우)
+    if not selected.empty:
+        counts = selected["cluster"].value_counts()
+        selected["cluster"] = selected["cluster"].map(
+            lambda c: f"{c.split('(')[0]}({counts[c]}건)" if c and counts.get(c, 0) > 1 else ("" if c else c))
     reference = reference.sort_values("score", ascending=False)
 
     status, overall = paper_status(df, cfg, target_date, confirmed_empty, now)
@@ -396,6 +418,7 @@ def _classify(r, cfg: Config):
         for s in cfg.sections:
             if s.opinion:
                 sub = _opinion_kind(r, s)
+                r["_subrank"] = 0 if (s.topic_first and _hits(text, s.topic_first)) else 1
                 if s.preferred_media and r["paper"] not in s.preferred_media:
                     h = _hits(text, s.other_media_require)
                     if h:  # 우선 매체 외라도 반도체·삼성 관련 주제면 포함
