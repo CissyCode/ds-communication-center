@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31s"
+VERSION = "2026-10-31t"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -644,13 +644,20 @@ def reorder(win, group: str, current: list[str], desired: list[str]) -> None:
         arts = _group_articles(win, group)
         if len(arts) != len(order):
             raise Stop("정렬 중 그룹 기사 수가 바뀌었습니다. 멈춥니다.")
-        art = arts[idx]
-        try:   # 화면 밖 기사는 먼저 보이게 스크롤
-            art.iface_scroll_item.ScrollIntoView()
-            time.sleep(0.3)
-        except Exception:
-            pass
-        cbs = art.children(control_type="CheckBox")
+        cbs = []
+        for attempt in range(3):   # 실체화·스크롤 직후엔 체크박스가 아직 없을 수 있어 다시 읽는다
+            art = arts[idx]
+            try:
+                art.iface_scroll_item.ScrollIntoView()
+            except Exception:
+                pass
+            time.sleep(0.4 + 0.3 * attempt)
+            arts = _group_articles(win, group)
+            if len(arts) != len(order):
+                raise Stop("정렬 중 그룹 기사 수가 바뀌었습니다. 멈춥니다.")
+            cbs = arts[idx].descendants(control_type="CheckBox")
+            if cbs:
+                break
         if not cbs:
             raise Stop(f"{idx + 1}번째 기사의 체크박스를 찾지 못했습니다.")
         cb = cbs[0]
