@@ -7,6 +7,7 @@
   python sm5_read.py grids             화면의 표·목록(DataGrid/List/Tree/Table)과 행 수, 첫 행 내용
   python sm5_read.py big               종류와 관계없이 자식 요소가 많은 영역(기사 목록 후보) 찾기
   python sm5_read.py popup --wait 8    8초 기다린 뒤 스크랩마스터의 팝업(오른쪽 클릭 메뉴 등) 항목 읽기
+  python sm5_read.py rects             주요 영역의 화면 좌표(검색결과 하단 버튼 위치 계산용) + 창 캡처
   python sm5_read.py dump <automation_id> [--depth N]   특정 영역 하위 구조 출력
 
 결과는 화면 출력과 함께 output\\sm5_<명령>.txt 로 저장한다.
@@ -154,6 +155,30 @@ def read_popups(win) -> list[str]:
     return lines or ["팝업 창이 없습니다. 대기 시간 안에 스크랩마스터에서 오른쪽 클릭 메뉴를 열어 두세요."]
 
 
+RECT_IDS = ["tcSearchResultTab", "btnSearchResultGroupSet", "btnSearchResultFilter", "btnSearchResultOrder",
+            "RepeatSearchButton", "comboSearchResultCount_ext", "gsSearchBottom", "gsSearchRight",
+            "SearchViewTopSplitter", "ScrapListSplitter", "scraplistDataGrid", "ScrapGroupTab", "MainStatusBar"]
+
+
+def read_rects(win) -> list[str]:
+    r = win.rectangle()
+    lines = [f"window\t{r.left},{r.top},{r.right},{r.bottom}\t{r.width()}x{r.height()}"]
+    for aid in RECT_IDS:
+        e = by_id(win, aid)
+        if e is None:
+            lines.append(f"{aid}\t(없음)")
+            continue
+        q = e.rectangle()
+        lines.append(f"{aid}\t{q.left},{q.top},{q.right},{q.bottom}\t{q.width()}x{q.height()}")
+    try:
+        OUT.mkdir(exist_ok=True)
+        win.capture_as_image().save(OUT / "sm5_window.png")
+        lines.append(f"창 캡처: {OUT / 'sm5_window.png'}")
+    except Exception as e:  # Pillow 없으면 생략
+        lines.append(f"(창 캡처 생략: {e})")
+    return lines
+
+
 def dump(elem, depth: int, indent: int = 0, lines=None) -> list[str]:
     lines = [] if lines is None else lines
     ei = elem.element_info
@@ -166,7 +191,7 @@ def dump(elem, depth: int, indent: int = 0, lines=None) -> list[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["keywords", "groups", "scraplist", "results", "grids", "big", "popup", "dump"])
+    ap.add_argument("cmd", choices=["keywords", "groups", "scraplist", "results", "grids", "big", "popup", "rects", "dump"])
     ap.add_argument("auto_id", nargs="?")
     ap.add_argument("--depth", type=int, default=6)
     ap.add_argument("--wait", type=int, default=0, help="읽기 전에 기다릴 초")
@@ -189,6 +214,8 @@ def main() -> int:
         lines = read_big(win)
     elif args.cmd == "popup":
         lines = read_popups(win)
+    elif args.cmd == "rects":
+        lines = read_rects(win)
     elif args.cmd == "results":
         lines = []
         for aid in ("tbCurrentSearchResultGroup", "tbCurrentSearchResultKeywordInfo1",
