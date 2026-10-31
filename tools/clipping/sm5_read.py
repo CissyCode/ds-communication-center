@@ -6,6 +6,7 @@
   python sm5_read.py results           현재 표시 중인 검색결과 영역 구조(행 읽기 방식 확인용)
   python sm5_read.py grids             화면의 표·목록(DataGrid/List/Tree/Table)과 행 수, 첫 행 내용
   python sm5_read.py big               종류와 관계없이 자식 요소가 많은 영역(기사 목록 후보) 찾기
+  python sm5_read.py popup --wait 8    8초 기다린 뒤 스크랩마스터의 팝업(오른쪽 클릭 메뉴 등) 항목 읽기
   python sm5_read.py dump <automation_id> [--depth N]   특정 영역 하위 구조 출력
 
 결과는 화면 출력과 함께 output\\sm5_<명령>.txt 로 저장한다.
@@ -137,6 +138,22 @@ def read_big(win, min_children: int = 8) -> list[str]:
     return lines
 
 
+def read_popups(win) -> list[str]:
+    """메인 창 밖에 뜨는 스크랩마스터 창(오른쪽 클릭 메뉴·대화상자)의 항목을 읽는다."""
+    pid = win.element_info.process_id
+    lines = []
+    for w in Desktop(backend="uia").windows(process=pid):
+        if w.handle == win.handle:
+            continue
+        ei = w.element_info
+        lines.append(f"## {ei.control_type}\t{w.window_text()!r}\t{ei.automation_id!r}\t{ei.class_name!r}")
+        for c in w.descendants():
+            ce = c.element_info
+            if ce.control_type in ("MenuItem", "Button", "ListItem", "CheckBox", "RadioButton", "Text", "Edit"):
+                lines.append(f"  {ce.control_type}\t{ce.name!r}\t{ce.automation_id!r}")
+    return lines or ["팝업 창이 없습니다. 대기 시간 안에 스크랩마스터에서 오른쪽 클릭 메뉴를 열어 두세요."]
+
+
 def dump(elem, depth: int, indent: int = 0, lines=None) -> list[str]:
     lines = [] if lines is None else lines
     ei = elem.element_info
@@ -149,12 +166,17 @@ def dump(elem, depth: int, indent: int = 0, lines=None) -> list[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["keywords", "groups", "scraplist", "results", "grids", "big", "dump"])
+    ap.add_argument("cmd", choices=["keywords", "groups", "scraplist", "results", "grids", "big", "popup", "dump"])
     ap.add_argument("auto_id", nargs="?")
     ap.add_argument("--depth", type=int, default=6)
+    ap.add_argument("--wait", type=int, default=0, help="읽기 전에 기다릴 초")
     args = ap.parse_args()
 
     win = main_window()
+    if args.wait:
+        import time
+        print(f"{args.wait}초 뒤에 읽습니다. 지금 스크랩마스터 화면을 준비해 주세요...")
+        time.sleep(args.wait)
     if args.cmd == "keywords":
         lines = read_keywords(win)
     elif args.cmd == "groups":
@@ -165,6 +187,8 @@ def main() -> int:
         lines = read_grids(win)
     elif args.cmd == "big":
         lines = read_big(win)
+    elif args.cmd == "popup":
+        lines = read_popups(win)
     elif args.cmd == "results":
         lines = []
         for aid in ("tbCurrentSearchResultGroup", "tbCurrentSearchResultKeywordInfo1",
