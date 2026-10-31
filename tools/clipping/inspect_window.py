@@ -19,8 +19,11 @@ import win32con
 import win32process
 from pywinauto import Desktop
 
-BROWSERS = ("chrome.exe", "msedge.exe", "whale.exe", "firefox.exe", "iexplore.exe")
-HINTS = ("scrap", "sm5", "스크랩마스터")
+# 스크랩마스터가 아닌 것이 확실한 프로그램(브라우저·탐색기·터미널·파이썬)
+SKIP_EXE = ("chrome.exe", "msedge.exe", "whale.exe", "firefox.exe", "iexplore.exe", "explorer.exe",
+            "windowsterminal.exe", "powershell.exe", "pwsh.exe", "cmd.exe", "python.exe", "code.exe", "notepad.exe")
+EXE_HINTS = ("scrapmaster", "sm5")            # 실행 파일 이름
+TITLE_HINTS = ("스크랩마스터", "scrapmaster", "scrap master")  # 창 제목
 
 
 def exe_of(pid: int) -> str:
@@ -53,17 +56,24 @@ def main() -> int:
         targets = [x for x in wins if args.title in x[1]]
     else:
         targets = [x for x in wins
-                   if x[2].lower() not in BROWSERS
-                   and any(h in (x[1] + " " + x[2]).lower() for h in HINTS)]
+                   if x[2].lower() not in SKIP_EXE
+                   and (any(h in x[2].lower() for h in EXE_HINTS)
+                        or any(h in x[1].lower() for h in TITLE_HINTS))]
+
+    # 열려 있는 창 목록은 항상 저장(어느 창이 스크랩마스터인지 확인용)
+    list_path = out_dir / "windows_list.txt"
+    with open(list_path, "w", encoding="utf-8") as f:
+        for _, title, exe in wins:
+            f.write(f"{exe}\t{title!r}\n")
 
     if not targets:
-        path = out_dir / "windows_list.txt"
-        with open(path, "w", encoding="utf-8") as f:
-            for _, title, exe in wins:
-                f.write(f"{exe}\t{title!r}\n")
-        print("스크랩마스터 창을 찾지 못했습니다. 열려 있는 창 목록을 저장했습니다:", path)
-        print("스크랩마스터가 실행 중인지 확인하고, 목록에서 해당 줄을 알려 주세요.")
+        print("스크랩마스터 창을 찾지 못했습니다. 열려 있는 창 목록:", list_path)
+        for _, title, exe in wins:
+            print(f"  {exe}\t{title}")
+        print("스크랩마스터가 실행 중인지 확인하고, 위 목록에서 스크랩마스터 줄을 알려 주세요.")
+        print("창을 직접 지정하려면: python inspect_window.py 검색 --title 창제목일부")
         return 1
+    print("대상 창:", ", ".join(f"{t} [{e}]" for _, t, e in targets))
 
     path = out_dir / f"window_{args.tag}.txt"
     total = 0
