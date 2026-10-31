@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31t"
+VERSION = "2026-10-31u"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -587,17 +587,15 @@ def scrap_rows(win, seqs: list[int]) -> None:
     no_popup_or_stop(win, "[스크랩]")
 
 
-def _container_items(item) -> list:
-    """그룹(트리 항목) 아래 기사들을 화면 밖 것까지 순서대로 가져온다(가상 항목 실체화).
+def _container_elements(item) -> list:
+    """그룹(트리 항목) 아래 항목들을 화면 밖 것까지 순서대로 가져온다(실체화는 하지 않음).
 
-    스크랩 목록은 화면에 보이는 기사만 자동화 도구에 알려 주므로, ItemContainer 패턴으로 차례로 찾고
-    VirtualizedItem 패턴으로 실제 항목을 만든다."""
+    스크랩 목록은 화면에 보이는 기사만 자동화 도구에 알려 주므로 ItemContainer 패턴으로 차례로 찾는다.
+    (전부 실체화하면 목록이 마지막 항목 쪽으로 스크롤돼 버려서, 필요한 한 건만 실체화한다.)"""
     import ctypes
 
     from comtypes.automation import VARIANT
-    from pywinauto.controls.uiawrapper import UIAWrapper
     from pywinauto.uia_defines import IUIA, get_elem_interface
-    from pywinauto.uia_element_info import UIAElementInfo
 
     container = get_elem_interface(item.element_info.element, "ItemContainer")
     null = ctypes.POINTER(IUIA().UIA_dll.IUIAutomationElement)()
@@ -608,17 +606,17 @@ def _container_items(item) -> list:
             break
         out.append(el)
         prev = el
-    wrappers = []
-    for el in out:
-        try:
-            get_elem_interface(el, "VirtualizedItem").Realize()
-        except Exception:
-            pass   # 이미 실체화된 항목
-        wrappers.append(UIAWrapper(UIAElementInfo(el)))
-    return wrappers
+    return out
 
 
-def _group_articles(win, group: str) -> list:
+def _rid(el) -> tuple:
+    try:
+        return tuple(el.GetRuntimeId())
+    except Exception:
+        return ()
+
+
+def _expanded_group(win, group: str):
     item = group_tree_item(win, group)
     if item.get_expand_state() != 1:
         try:
@@ -627,38 +625,135 @@ def _group_articles(win, group: str) -> list:
             find(item, auto_id="chkExpand").click_input()
         time.sleep(0.6)
         item = group_tree_item(win, group)
-    arts = [a for a in _container_items(item) if a.element_info.name == "ScrapMaster5.Article"]
-    return arts
+    return item
+
+
+def _article_elements(win, group: str) -> list:
+    item = _expanded_group(win, group)
+    out = []
+    for el in _container_elements(item):
+        try:
+            name = el.CurrentName
+        except Exception:
+            name = ""
+        if name in ("", "ScrapMaster5.Article"):
+            out.append(el)
+    return out
+
+
+def _visible_articles(win, group: str) -> list:
+    """화면 목록 안에 실제로 보이는(체크박스를 누를 수 있는) 기사 항목."""
+    tr = need(win, "treeScrapArticleList").rectangle()
+    item = group_tree_item(win, group)
+    vis = []
+    for k in item.children(control_type="TreeItem"):
+        if k.element_info.name != "ScrapMaster5.Article":
+            continue
+        r = k.rectangle()
+        if r.height() > 0 and r.top >= tr.top and r.bottom <= tr.bottom:
+            vis.append(k)
+    return vis
+
+
+def _dump_tree(win, group: str, note: str) -> None:
+    OUT.mkdir(exist_ok=True)
+    p = OUT / f"reorder_debug_{datetime.now():%H%M%S}.txt"
+    try:
+        tr = need(win, "treeScrapArticleList").rectangle()
+        item = group_tree_item(win, group)
+        lines = [note, f"tree {tr}"]
+        for k in item.children(control_type="TreeItem"):
+            lines.append(f"{k.element_info.name}\t{k.rectangle()}\t{k.element_info.runtime_id}\t"
+                         f"cb={len(k.descendants(control_type='CheckBox'))}\t{texts(k)[:3]}")
+        p.write_text("\n".join(lines), encoding="utf-8")
+        log(f"진단 기록: {p}")
+    except Exception as e:
+        log(f"진단 기록 실패: {e}")
+
+
+def _bring_into_view(win, group: str, idx: int, total: int):
+    """idx번째 기사가 화면에 보이게 스크롤하고, 그 항목(보이는 래퍼)을 돌려준다."""
+    from pywinauto.uia_defines import get_elem_interface
+
+    tree = need(win, "treeScrapArticleList")
+    tr = tree.rectangle()
+    centre = ((tr.left + tr.right) // 2, (tr.top + tr.bottom) // 2)
+    last_vis = None
+    for step in range(80):
+        els = _article_elements(win, group)
+        if len(els) != total:
+            raise Stop(f"정렬 중 그룹 기사 수가 바뀌었습니다({len(els)} ≠ {total}). 멈춥니다.")
+        target = els[idx]
+        if step == 0:
+            try:   # 가상 항목이면 실체화(WPF는 이때 해당 항목 쪽으로 스크롤하기도 함)
+                get_elem_interface(target, "VirtualizedItem").Realize()
+                time.sleep(0.4)
+                els = _article_elements(win, group)
+                target = els[idx]
+            except Exception:
+                pass
+            try:
+                get_elem_interface(target, "ScrollItem").ScrollIntoView()
+                time.sleep(0.4)
+            except Exception:
+                pass
+        want = _rid(target)
+        pos = {_rid(e): i for i, e in enumerate(els)}
+        vis = _visible_articles(win, group)
+        for k in vis:
+            if want and tuple(k.element_info.runtime_id or ()) == want:
+                return k
+        idxs = sorted(pos[r] for r in (tuple(k.element_info.runtime_id or ()) for k in vis) if r in pos)
+        if idxs and idxs[0] <= idx <= idxs[-1]:
+            # 범위 안인데 일치가 없으면 아이디가 안 맞는 것 — 위치(순번)로 고른다
+            by_top = sorted(vis, key=lambda k: k.rectangle().top)
+            first = idxs[0]
+            if 0 <= idx - first < len(by_top) and len(idxs) == len(by_top):
+                return by_top[idx - first]
+        if idxs and idxs == last_vis and step > 3:
+            break   # 더 이상 스크롤되지 않음
+        last_vis = idxs
+        down = (not idxs) or idx > idxs[-1]
+        gap = (idx - idxs[-1]) if (idxs and down) else ((idxs[0] - idx) if idxs else 3)
+        mouse.scroll(coords=centre, wheel_dist=-max(1, min(5, gap // 3 + 1)) if down else max(1, min(5, gap // 3 + 1)))
+        time.sleep(0.35)
+    _dump_tree(win, group, f"idx={idx} total={total}")
+    raise Stop(f"{idx + 1}번째 기사를 화면에 띄우지 못했습니다(스크롤 실패).")
+
+
+def plan_moves(current: list[str], desired: list[str]) -> list[str]:
+    """[맨 위로]로 옮겨야 하는 기사(옮길 순서대로). desired의 뒷부분 중 current에 이미 같은 순서로
+    놓인 가장 긴 꼬리는 그대로 두고, 나머지만 뒤에서부터 맨 위로 올린다."""
+    k = len(desired)
+    j = len(current) - 1
+    while k > 0:
+        while j >= 0 and current[j] != desired[k - 1]:
+            j -= 1
+        if j < 0:
+            break
+        k -= 1
+        j -= 1
+    return list(reversed(desired[:k]))
 
 
 def reorder(win, group: str, current: list[str], desired: list[str]) -> None:
     """current: 지금 순서의 Serial 키 목록. desired: 원하는 순서. 뒤에서부터 [맨 위로]."""
     order = list(current)
+    total = len(order)
     uncheck_all_scraps(win)
-    arts = _group_articles(win, group)
-    if len(arts) != len(order):
-        raise Stop(f"스크랩 목록에서 읽은 기사 수({len(arts)})가 그룹 엑셀({len(order)})과 다릅니다. 멈춥니다.")
-    log(f"정렬 시작: {len(desired)}건")
-    for n, key in enumerate(reversed(desired), 1):
+    els = _article_elements(win, group)
+    if len(els) != total:
+        raise Stop(f"스크랩 목록에서 읽은 기사 수({len(els)})가 그룹 엑셀({total})과 다릅니다. 멈춥니다.")
+    moves = plan_moves(order, desired)
+    log(f"정렬 시작: {len(desired)}건 중 {len(moves)}건 이동")
+    for n, key in enumerate(moves, 1):
         idx = order.index(key)
-        arts = _group_articles(win, group)
-        if len(arts) != len(order):
-            raise Stop("정렬 중 그룹 기사 수가 바뀌었습니다. 멈춥니다.")
-        cbs = []
-        for attempt in range(3):   # 실체화·스크롤 직후엔 체크박스가 아직 없을 수 있어 다시 읽는다
-            art = arts[idx]
-            try:
-                art.iface_scroll_item.ScrollIntoView()
-            except Exception:
-                pass
-            time.sleep(0.4 + 0.3 * attempt)
-            arts = _group_articles(win, group)
-            if len(arts) != len(order):
-                raise Stop("정렬 중 그룹 기사 수가 바뀌었습니다. 멈춥니다.")
-            cbs = arts[idx].descendants(control_type="CheckBox")
-            if cbs:
-                break
+        if idx == 0:
+            continue
+        art = _bring_into_view(win, group, idx, total)
+        cbs = art.descendants(control_type="CheckBox")
         if not cbs:
+            _dump_tree(win, group, f"no checkbox idx={idx}")
             raise Stop(f"{idx + 1}번째 기사의 체크박스를 찾지 못했습니다.")
         cb = cbs[0]
         if not cb.get_toggle_state():
@@ -668,11 +763,16 @@ def reorder(win, group: str, current: list[str], desired: list[str]) -> None:
             raise Stop("정렬할 기사를 체크하지 못했습니다.")
         if not click_visible(win, ("btnScrapListSelectedTop",)):
             raise Stop("[맨 위로] 버튼이 보이지 않습니다.")
-        time.sleep(0.4)
+        time.sleep(0.5)
         order.insert(0, order.pop(idx))
         uncheck_all_scraps(win)
+        if n == 1:   # 첫 이동이 실제로 맨 위로 갔는지 확인(아이디가 유지되는 경우에만 판단 가능)
+            moved = tuple(art.element_info.runtime_id or ())
+            top = _rid(_article_elements(win, group)[0])
+            if moved and top and moved != top:
+                log("주의: 첫 이동 뒤 맨 위 항목 아이디가 다릅니다(최종 검증에서 다시 확인).")
         if n % 10 == 0:
-            log(f"정렬 진행 {n}/{len(desired)}")
+            log(f"정렬 진행 {n}/{len(moves)}")
 
 
 def main() -> int:
