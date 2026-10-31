@@ -283,6 +283,18 @@ def _is_opinion(r, cfg: Config) -> bool:
     return any(m in cat for m in cfg.opinion_markers) or any(f"[{m}" in head or f"<{m}" in head for m in cfg.opinion_markers)
 
 
+def _opinion_kind(r, s) -> str:
+    """칼럼/사설 소제목 안에서 '칼럼'과 '사설'을 나눈다. 사설은 기자명이 없거나 [사설]·카테고리 사설."""
+    names = [t.name for t in s.subtopics]
+    if "사설" not in names:
+        return ""
+    head = r["title"][:8]
+    cat = str(r.get("category") or "")
+    rep = str(r.get("reporter") if r.get("reporter") is not None else "").strip()
+    editorial = "사설" in head or "사설" in cat or not rep or rep.lower() in ("nan", "none")
+    return "사설" if editorial else ("칼럼" if "칼럼" in names else "")
+
+
 def classify(r, cfg: Config):
     """(소제목, 소주제, 점수, 사유 목록, 메모). require_keywords가 있는 소제목은 그 말이 없으면 점수 0."""
     sec, sub, w, why, note = _classify(r, cfg)
@@ -315,12 +327,13 @@ def _classify(r, cfg: Config):
     if _is_opinion(r, cfg):
         for s in cfg.sections:
             if s.opinion:
+                sub = _opinion_kind(r, s)
                 if s.preferred_media and r["paper"] not in s.preferred_media:
                     h = _hits(text, s.other_media_require)
                     if h:  # 우선 매체 외라도 반도체·삼성 관련 주제면 포함
-                        return s.name, "", s.weight, [f"{s.name}(우선 매체 외, 주제 '{h[0]}')"], ""
-                    return s.name, "", s.weight * s.other_media_factor, [f"{s.name}(우선 매체 외)"], ""
-                return s.name, "", s.weight, [f"{s.name}"], ""
+                        return s.name, sub, s.weight, [f"{s.name}(우선 매체 외, 주제 '{h[0]}')"], ""
+                    return s.name, sub, s.weight * s.other_media_factor, [f"{s.name}(우선 매체 외)"], ""
+                return s.name, sub, s.weight, [f"{s.name}"], ""
     by_name = {s.name: s for s in cfg.sections}
     for f in cfg.force_sections:
         h = _hits(r["title"], f.get("keywords") or [])

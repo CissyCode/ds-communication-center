@@ -257,6 +257,24 @@ class ScrapDraftTest(unittest.TestCase):
         self.assertEqual(sel.at["S:8001", "section"], "관계사")
         self.assertIn("현안 가능", sel.at["S:8001", "note"])
 
+    def test_column_before_editorial(self):
+        """칼럼/사설 안에서는 칼럼(기자명 있음) 먼저, 사설(기자명 없음) 나중."""
+        base = (HERE / "tests" / "fixture_config.yaml").read_text(encoding="utf-8")
+        base = base.replace("    opinion: true\n", "    opinion: true\n    subtopics:\n      - {name: 칼럼, keywords: []}\n"
+                                                   "      - {name: 사설, keywords: []}\n")
+        cfg_p = self.tmp / "cfg7.yaml"
+        cfg_p.write_text(base, encoding="utf-8")
+        H = ["연번", "기사 제목", "매체명", "지면번호", "발행일", "구분", "카테고리", "크기", "검색어", "기자", "기사 시리얼"]
+        p = self.tmp / "mini7.xlsx"
+        pd.DataFrame([H,
+                      [1, "예산 심사 엄격히", "매일경제", "A35", D, "지면", "사설", "20 x 20㎝", "반도체", "", "9001"],
+                      [2, "반도체 패권의 조건", "한국경제", "A34", D, "지면", "오피니언", "20 x 30㎝", "반도체", "논설위원A", "9002"],
+                      ]).to_excel(p, header=False, index=False)
+        res = build_draft(read_export(p), load_config(cfg_p), date(2026, 11, 2))
+        sel = res.selected.set_index("key")
+        self.assertEqual((sel.at["S:9001", "subtopic"], sel.at["S:9002", "subtopic"]), ("사설", "칼럼"))
+        self.assertEqual(list(res.selected["key"]), ["S:9002", "S:9001"])
+
     def test_status_before_ready_time(self):
         res = build_draft(read_export(self.xlsx), self.cfg(), date(2026, 11, 2), now=datetime(2026, 11, 2, 6, 0))
         st = res.paper_status.set_index("매체")["상태"]

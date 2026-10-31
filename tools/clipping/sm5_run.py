@@ -36,7 +36,7 @@ from scrapdraft.report import write_report
 from sm5_read import OUT, WINDOW_TITLE, by_id, expand_search_folders, read_keywords, read_popups, texts
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31j"
+VERSION = "2026-10-31k"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -320,6 +320,31 @@ def refresh_search(win, wait_s: int) -> list[str]:
     return read_keywords(win)
 
 
+def list_source_groups(win) -> list[str]:
+    """'관심 키워드' 폴더의 검색어 그룹 중 지면 결과가 있는 것. 같은 검색어가 여럿이면 '검색어@매체수'."""
+    tree = need(win, "treeSearchResultGroups")
+    expand_search_folders(tree)
+    time.sleep(0.5)
+    found = []
+    for folder in tree.children(control_type="TreeItem"):
+        ft = texts(folder)
+        if not ft or ft[0] != "관심 키워드":
+            continue
+        for item in folder.children(control_type="TreeItem"):
+            if item.element_info.name != "ScrapMaster5.SearchGroup":
+                continue
+            t = texts(item)
+            if not t:
+                continue
+            kw = t[0].strip()
+            cnt = next((x for x in t if re.fullmatch(r"\d+ / [\d-]+", x)), "0 / 0")
+            media = next((m.group(1) for x in t for m in [re.search(r"매체:(\d+)/", x)] if m), "")
+            if int(cnt.split("/")[0]) > 0:
+                found.append((kw, media))
+    names = [k for k, _ in found]
+    return [f"{k}@{m}" if names.count(k) > 1 and m else k for k, m in found]
+
+
 def open_source_group(win, spec: str) -> int:
     """spec: '검색어' 또는 '검색어@매체수'(같은 검색어가 여러 개일 때, 예: '삼성 반도체@3' = 석간 3개 매체용)."""
     keyword, _, media_n = spec.partition("@")
@@ -415,7 +440,7 @@ def main() -> int:
     ap.add_argument("--date", help="대상 일자(기본 오늘)")
     ap.add_argument("--group", help="검토 그룹 이름(기본 자동검토_MMDD)")
     ap.add_argument("--source", action="append",
-                    help="후보로 쓸 검색어 그룹(여러 번 지정 가능). 같은 이름이 여럿이면 '이름@매체수'. 기본 '삼성 반도체'")
+                    help="후보로 쓸 검색어 그룹(여러 번 지정 가능). 'all'이면 관심 키워드 전체. 같은 이름이 여럿이면 '이름@매체수'. 기본 '삼성 반도체'")
     ap.add_argument("--until", choices=["export", "scrap", "order"], default="order")
     ap.add_argument("--config", default=str(HERE / "config.yaml"))
     ap.add_argument("--issues", default=str(HERE / "issues.yaml"))
@@ -453,6 +478,9 @@ def main() -> int:
 
         # 2) 후보 내보내기(검색어 그룹별)
         sources = args.source or ["삼성 반도체"]
+        if sources == ["all"]:
+            sources = list_source_groups(win)
+            log(f"검색어 그룹 {len(sources)}개(지면 결과 있는 것)를 후보로 사용")
         parts, src = [], None
         for i, spec in enumerate(sources, 1):
             n = open_source_group(win, spec)

@@ -6,7 +6,7 @@
 # 같은 날 여러 번 실행해도 이미 담긴 기사는 다시 담지 않고 새로 들어온 신문 기사만 추가합니다.
 param(
   [string[]]$Times = @("03:45", "04:03", "04:12"),
-  [string[]]$Sources = @("삼성 반도체"),
+  [string[]]$Sources = @("all"),
   [switch]$Remove
 )
 $ErrorActionPreference = "Stop"
