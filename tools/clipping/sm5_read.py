@@ -165,8 +165,21 @@ def main() -> int:
         lines = read_grids(win)
     elif args.cmd == "big":
         lines = read_big(win)
+    elif args.cmd == "results":
+        lines = []
+        for aid in ("tbCurrentSearchResultGroup", "tbCurrentSearchResultKeywordInfo1",
+                    "tbCurrentSearchResultKeywordOption", "tbCurrentSearchResultCount"):
+            e = by_id(win, aid)
+            lines.append(f"{aid}: {e.window_text() if e is not None else '(없음)'}")
+        tab = by_id(win, "tcSearchResultTab")
+        lines += dump(tab, 8) if tab is not None else ["tcSearchResultTab 없음"]
+        # 창 안의 별도 Win32 자식 창(외부 그리드가 따로 붙어 있는지 확인)
+        import win32gui
+        kids = []
+        win32gui.EnumChildWindows(win.handle, lambda h, acc: acc.append(h), kids)
+        lines.append(f"Win32 자식 창 {len(kids)}개: " + ", ".join(sorted({win32gui.GetClassName(h) for h in kids}))[:500])
     else:
-        auto_id = "tcSearchResultTab" if args.cmd == "results" else args.auto_id
+        auto_id = args.auto_id
         if not auto_id:
             sys.exit("dump 뒤에 automation_id를 적어 주세요. 예: python sm5_read.py dump tcSearchResultTab")
         elem = by_id(win, auto_id)
