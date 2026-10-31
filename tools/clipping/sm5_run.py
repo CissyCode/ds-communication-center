@@ -392,6 +392,8 @@ def main() -> int:
         report = write_report(run_dir / f"검토초안_{target}_run{run_id}.xlsx", res, {
             "대상 일자": target.isoformat(), "실행 번호": run_id, "후보 그룹": ", ".join(sources), "검토 그룹": group,
             "입력 기사 수": len(df), "추천": len(res.selected), "전체 상태": res.overall,
+            **({"분량(참고 범위, 자르지 않음)": f"{len(res.selected)}건 / {cfg.volume_range[0]}~{cfg.volume_range[1]}건"}
+               if cfg.volume_range else {}),
         })
         log(f"추천 {len(res.selected)}건 / 참고 {len(res.reference)} / 제외·중복 {len(res.removed)} — {report.name}")
         log(f"신문별 상태: {res.overall}")

@@ -13,6 +13,7 @@ import yaml
 class Subtopic:
     name: str
     keywords: list[str]
+    ordered: bool = False   # true면 keywords 순서가 소주제 안 배열 순서(예: 경쟁사 SK하이닉스 → 마이크론 → …)
 
 
 @dataclass
@@ -24,6 +25,7 @@ class Section:
     opinion: bool = False             # 사설·칼럼 소제목
     preferred_media: list[str] = field(default_factory=list)  # 사설·칼럼 우선 매체(그 외는 점수 감점)
     other_media_factor: float = 0.8
+    require_keywords: list[str] = field(default_factory=list)  # 이 소제목은 이 말(제목·부제목·검색어)이 있을 때만 추천
 
 
 @dataclass
@@ -42,7 +44,8 @@ class Issue:
     pin_top: bool = False
     section: str | None = None
     subtopic: str | None = None
-    bundle: bool = False      # 이 현안 기사들을 대표 1건 뒤에 관련기사로 묶음(목차엔 대표만)
+    bundle: bool = False      # 이 현안 기사들을 대표 뒤에 관련기사로 묶음(목차엔 대표 toc_max건만)
+    max_items: int | None = None  # 보도자료 동일 보도처럼 추천 건수 상한(주요 매체순). 나머지는 '참고'로
 
     def active(self, on: date) -> bool:
         return on <= self.until
@@ -70,6 +73,9 @@ class Config:
     edition_markers: list[str]
     edition_similarity: float
     cluster_similarity: float
+    toc_max: int = 1                  # 묶음(같은 사안·연결기사)에서 목차에 표시할 건수
+    alert_keywords: list[str] = field(default_factory=list)   # '우선 검토' 표시(배열과 별개)
+    volume_range: tuple[int, int] | None = None               # 분량 참고 범위(자르지 않음)
     evening_papers: list[str] = field(default_factory=list)   # 석간: 대상일 전날 발행분을 정상으로 봄
     shape_bonus: float = 0.0          # 3~4단 폭 세로형 기사 가점
     shape_min_width: float = 9.0
@@ -150,16 +156,19 @@ def load_config(path: str | Path, extra: list[str | Path] | None = None) -> Conf
             name=i["name"], keywords=list(i.get("keywords") or []), until=_as_date(i["until"]),
             boost=float(i.get("boost", 50)), pin_top=bool(i.get("pin_top", False)),
             section=i.get("section"), subtopic=i.get("subtopic"), bundle=bool(i.get("bundle", False)),
+            max_items=int(i["max_items"]) if i.get("max_items") else None,
         ))
 
     sections = []
     for s in c.get("sections") or []:
-        subs = [Subtopic(t["name"], list(t.get("keywords") or [])) for t in s.get("subtopics") or []]
+        subs = [Subtopic(t["name"], list(t.get("keywords") or []), bool(t.get("ordered", False)))
+                for t in s.get("subtopics") or []]
         sections.append(Section(
             name=s["name"], keywords=list(s.get("keywords") or []), weight=float(s.get("weight", 50)),
             subtopics=subs, opinion=bool(s.get("opinion", False)),
             preferred_media=list(s.get("preferred_media") or []),
             other_media_factor=float(s.get("other_media_factor", 0.8)),
+            require_keywords=list(s.get("require_keywords") or []),
         ))
 
     papers = c.get("papers") or {}
@@ -188,6 +197,9 @@ def load_config(path: str | Path, extra: list[str | Path] | None = None) -> Conf
         edition_markers=list(dedup.get("edition_markers") or ["가판", "초판"]),
         edition_similarity=float(dedup.get("edition_similarity", 0.6)),
         cluster_similarity=float(dedup.get("cluster_similarity", 0.5)),
+        toc_max=int(c.get("toc_max", 1)),
+        alert_keywords=list(c.get("alert_keywords") or []),
+        volume_range=tuple(c["volume_range"]) if c.get("volume_range") else None,
         evening_papers=list(c.get("evening_papers") or []),
         shape_bonus=float((c.get("shape") or {}).get("bonus", 0)),
         shape_min_width=float((c.get("shape") or {}).get("min_width_cm", 9)),

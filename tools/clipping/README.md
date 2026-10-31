@@ -103,3 +103,15 @@ python -m unittest discover tests
 `sm5_run.py --until export` 는 스크랩하지 않고 엑셀 저장과 초안 생성까지만 합니다.
 검토 그룹에 사람이 직접 넣은 기사가 있으면 정렬하지 않고 추가만 합니다.
 누르지 않는 버튼: 스크랩초기화, 선택삭제, 그룹 삭제, 스크랩북 덮어쓰기.
+
+## 9. 새벽 자동 실행
+
+관리자 권한 PowerShell에서 실행합니다(스크립트 실행이 막혀 있으면 `powershell -ExecutionPolicy Bypass -File register_schedule.ps1`).
+
+```powershell
+.\register_schedule.ps1
+```
+
+- 기본값은 03:45, 04:03, 04:12에 실행입니다. 마지막 실행이 끝나면 초안이 완성되도록 시각을 잡습니다.
+- 실행 기록은 `output\run_log.txt`, 실행마다 생기는 파일은 `output\runs\` 아래에 남습니다.
+- 화면 자동화이므로 PC가 켜져 있고, 로그인과 화면 잠금 해제가 된 상태에서 스크랩마스터가 실행 중이어야 합니다.

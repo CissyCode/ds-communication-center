@@ -132,9 +132,13 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             df.at[i, "drop_reason"] = f"제외 후보({', '.join(ex)})"
 
     # 6) 점수·소제목·소주제
-    scores, sections, subs, reasons, pins, bundles = [], [], [], [], [], []
+    scores, sections, subs, reasons, pins, bundles, subranks, alerts, blocked = [], [], [], [], [], [], [], [], []
     for _, r in df.iterrows():
+        r = r.copy()
+        r["_subrank"] = 0
         sec, sub, w, why, extra_note = classify(r, cfg)
+        subranks.append(r["_subrank"])
+        alerts.append(", ".join(_hits(f"{r['title']} {r['subtitle']}", cfg.alert_keywords)))
         if extra_note:
             df.at[_, "note"] += extra_note
         score, pin, bundle = w, False, ""
@@ -165,8 +169,12 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             why.append("세로형(3~4단)")
         scores.append(round(score, 1)); sections.append(sec); subs.append(sub); reasons.append("; ".join(why)); pins.append(pin)
         bundles.append(bundle)
+        blocked.append(any("관련 아님" in x for x in why))
     df["score"], df["section"], df["subtopic"], df["reason"], df["pin"] = scores, sections, subs, reasons, pins
     df["bundle"] = bundles
+    df["blocked"] = blocked
+    df["subrank"] = subranks
+    df["alert"] = alerts
 
     # 7) 다른 매체 유사 보도 묶음(삭제하지 않음, 표시와 연속 배치만)
     df["cluster"] = ""
@@ -201,11 +209,22 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
     # 8) 분리: 추천 / 참고 / 제외
     removed = df[df["drop_reason"] != ""].copy()
     live = df[df["drop_reason"] == ""].copy()
-    ok = (live["score"] >= cfg.min_score) & (live["is_print"] == True)  # noqa: E712
+    ok = (live["score"] >= cfg.min_score) & (live["is_print"] == True) & ~live["blocked"].astype(bool)  # noqa: E712
     selected, reference = live[ok].copy(), live[~ok].copy()
     reference.loc[reference["score"] < cfg.min_score, "note"] += "기준 점수 미달; "
 
     selected = order_articles(selected, cfg)
+    # 보도자료 동일 보도 등 상한(max_items): 주요 매체순 상위 N건만 추천, 나머지는 참고(삭제 아님)
+    for iss in cfg.issues:
+        if iss.max_items and iss.active(target_date):
+            members = selected[selected["bundle"] == iss.name]
+            extra = members.iloc[iss.max_items:]
+            if len(extra):
+                extra = extra.copy()
+                extra["note"] += f"'{iss.name}' 동일 보도 {iss.max_items}건 초과(주요 매체순); "
+                reference = pd.concat([reference, extra])
+                selected = order_articles(selected.drop(extra.index), cfg)
+    flag_same_media_runs(selected)
     reference = reference.sort_values("score", ascending=False)
 
     status, overall = paper_status(df, cfg, target_date, confirmed_empty, now)
@@ -219,7 +238,19 @@ def _is_opinion(r, cfg: Config) -> bool:
 
 
 def classify(r, cfg: Config):
-    """(소제목, 소주제, 점수, 사유 목록, 메모). 사설·칼럼 판단이 주제보다 먼저."""
+    """(소제목, 소주제, 점수, 사유 목록, 메모). require_keywords가 있는 소제목은 그 말이 없으면 점수 0."""
+    sec, sub, w, why, note = _classify(r, cfg)
+    s = next((x for x in cfg.sections if x.name == sec), None)
+    if s and s.require_keywords:
+        text = f"{r['title']} {r['subtitle']} {r['keyword']}"
+        if not _hits(text, s.require_keywords):
+            return sec, sub, 0.0, why + [f"{sec}: {'·'.join(s.require_keywords[:3])} 관련 아님"], \
+                note + f"{'·'.join(s.require_keywords[:3])} 관련 아님; "
+    return sec, sub, w, why, note
+
+
+def _classify(r, cfg: Config):
+    """사설·칼럼 판단이 주제보다 먼저."""
     text = f"{r['title']} {r['subtitle']}"
     if _is_opinion(r, cfg):
         for s in cfg.sections:
@@ -237,11 +268,15 @@ def classify(r, cfg: Config):
             factor, where = 0.5, "검색어"
         if not h:
             continue
-        sub = ""
+        sub, subrank = "", 0
         for st in s.subtopics:
-            if _hits(text, st.keywords) or (factor < 1 and _hits(r["keyword"], st.keywords)):
+            hit = _hits(text, st.keywords) or (factor < 1 and _hits(r["keyword"], st.keywords))
+            if hit:
                 sub = st.name
+                if st.ordered:
+                    subrank = min(st.keywords.index(h) for h in hit)
                 break
+        r["_subrank"] = subrank
         if not sub and s.subtopics:
             sub = s.subtopics[-1].name if not s.subtopics[-1].keywords else ""
         label = f"{s.name}/{sub}" if sub else s.name
@@ -264,13 +299,14 @@ def order_articles(sel: pd.DataFrame, cfg: Config) -> pd.DataFrame:
     sub_order = {s.name: [t.name for t in s.subtopics] for s in cfg.sections}
     sel["_sub"] = [sub_order.get(sec, []).index(sub) if sub in sub_order.get(sec, []) else 99
                    for sec, sub in zip(sel["section"], sel["subtopic"])]
+    sel["_subrank"] = sel["subrank"] if "subrank" in sel else 0
     sel["_media"] = sel["paper"].map(cfg.media_rank)
     sel["_page"] = sel["page_no"].fillna(999)
     sel["_size"] = -sel["size_cm2"].fillna(0)
     sel["_shape"] = [0 if cfg.good_shape(w, h) else 1 for w, h in
                      zip(sel.get("width_cm", [None] * len(sel)), sel.get("height_cm", [None] * len(sel)))]
-    sel = sel.sort_values(["_sec", "pin", "_sub", "_media", "_shape", "_page", "_size"],
-                          ascending=[True, False, True, True, True, True, True])
+    sel = sel.sort_values(["_sec", "pin", "_sub", "_subrank", "_media", "_shape", "_page", "_size"],
+                          ascending=[True, False, True, True, True, True, True, True])
 
     out, seen, toc = [], set(), {}
     rows = list(sel.index)
@@ -281,15 +317,34 @@ def order_articles(sel: pd.DataFrame, cfg: Config) -> pd.DataFrame:
         c = sel.at[i, "cluster"]
         toc[i] = "표시"
         if c:
+            shown = 1
             for j in rows:
                 same_sec = sel.at[j, "section"] == sel.at[i, "section"]
                 if j not in seen and sel.at[j, "cluster"] == c and (same_sec or c.startswith("현안:")):
                     out.append(j); seen.add(j)
-                    toc[j] = "숨김(관련기사)"
-    sel = sel.loc[out].drop(columns=["_sec", "_sub", "_media", "_shape", "_page", "_size"])
+                    if shown < cfg.toc_max:
+                        toc[j] = "표시(묶음)"
+                        shown += 1
+                    else:
+                        toc[j] = "숨김(관련기사)"
+    sel = sel.loc[out].drop(columns=["_sec", "_sub", "_subrank", "_media", "_shape", "_page", "_size"])
     sel["rank"] = range(1, len(sel) + 1)
     sel["toc"] = [toc[i] for i in out]
     return sel
+
+
+def flag_same_media_runs(sel: pd.DataFrame) -> None:
+    """목차에 표시되는 기사 중 같은 소제목에서 같은 매체가 연달아 나오면 메모만 남긴다(순서는 바꾸지 않음)."""
+    if sel.empty or "toc" not in sel:
+        return
+    prev = None
+    for i in sel.index:
+        if not str(sel.at[i, "toc"]).startswith("표시"):
+            continue
+        cur = (sel.at[i, "section"], sel.at[i, "paper"])
+        if prev is not None and cur == prev[1] and sel.at[i, "cluster"] != sel.at[prev[0], "cluster"]:
+            sel.at[i, "note"] += "목차상 같은 매체 연속; "
+        prev = (i, cur)
 
 
 def paper_status(df: pd.DataFrame, cfg: Config, target_date: date, confirmed_empty: list[str],

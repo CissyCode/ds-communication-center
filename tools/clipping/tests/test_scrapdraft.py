@@ -132,6 +132,52 @@ class ScrapDraftTest(unittest.TestCase):
         self.assertIn("세로형", sel.at["S:2002", "reason"])
         self.assertNotIn("발행일", sel.at["S:2003", "note"], "석간 전날 자는 정상")
 
+    def test_company_order_toc_cap_alert(self):
+        """경쟁사 순서(ordered), 묶음 목차 표시 상한, 보도자료 동일 보도 상한, 우선 검토 표시."""
+        base = (HERE / "tests" / "fixture_config.yaml").read_text(encoding="utf-8")
+        base = base.replace("      - {name: 반도체 업계, keywords: [다라반도체, HBM, 메모리]}",
+                            "      - {name: 경쟁사, keywords: [다라반도체, 마바테크, 사아칩], ordered: true}")
+        base = base.replace("keywords: [가나전자 반도체, 가나전자 HBM, 반도체, 다라반도체, HBM, 메모리]",
+                            "keywords: [가나전자 반도체, 반도체, 다라반도체, 마바테크, 사아칩]")
+        base += "toc_max: 2\nalert_keywords: [파업, 유출]\n"
+        cfg_p = self.tmp / "cfg.yaml"
+        cfg_p.write_text(base, encoding="utf-8")
+        iss = self.tmp / "today.yaml"
+        iss.write_text("issues:\n  - {name: 오늘 보도자료, keywords: [신제품], until: 2026-11-30, boost: 80, "
+                       "section: 핵심, subtopic: 보도자료, bundle: true, max_items: 3}\n", encoding="utf-8")
+        cfg = load_config(cfg_p, [iss])
+        rows = [
+            [1, "사아칩 신공장 착공", "", "매일경제", "A5", D, "지면", "산업", "20 x 20㎝", "반도체", "3001"],
+            [2, "마바테크 실적 호조", "", "매일경제", "A6", D, "지면", "산업", "20 x 20㎝", "반도체", "3002"],
+            [3, "다라반도체 노조 파업 예고", "", "한국경제", "A3", D, "지면", "산업", "20 x 20㎝", "반도체", "3003"],
+        ] + [[10 + k, f"가나전자 반도체 신제품 공개 {k}", "", m, "A1", D, "지면", "산업", "20 x 20㎝", "반도체", f"40{k}"]
+             for k, m in enumerate(["매일경제", "한국경제", "서울경제", "전자신문", "경향신문"])]
+        p = self.tmp / "mini2.xlsx"
+        pd.DataFrame([HEADER] + rows).to_excel(p, header=False, index=False)
+        res = build_draft(read_export(p), cfg, date(2026, 11, 2))
+        keys = list(res.selected["key"])
+        sel = res.selected.set_index("key")
+        self.assertEqual(keys[-3:], ["S:3003", "S:3002", "S:3001"], "경쟁사는 지정 순서")
+        self.assertEqual(keys[:3], ["S:400", "S:401", "S:402"], "보도자료 동일 보도는 주요 매체 3건")
+        self.assertIn("S:403", list(res.reference["key"]))
+        self.assertEqual([sel.at[k, "toc"] for k in keys[:3]], ["표시", "표시(묶음)", "숨김(관련기사)"])
+        self.assertEqual(sel.at["S:3003", "alert"], "파업")
+
+    def test_require_keywords(self):
+        """기타 소제목은 가나·반도체 관련일 때만 추천."""
+        base = (HERE / "tests" / "fixture_config.yaml").read_text(encoding="utf-8")
+        base = base.replace("    keywords: [정부, 경제]\n", "    keywords: [정부, 경제]\n    require_keywords: [가나, 반도체]\n")
+        cfg_p = self.tmp / "cfg2.yaml"
+        cfg_p.write_text(base, encoding="utf-8")
+        p = self.tmp / "mini3.xlsx"
+        pd.DataFrame([HEADER,
+                      [1, "정부 내년 경제정책 발표", "", "매일경제", "A1", D, "지면", "경제", "30 x 30㎝", "경제", "5001"],
+                      [2, "정부 경제정책에 가나 투자 포함", "", "매일경제", "A2", D, "지면", "경제", "30 x 30㎝", "경제", "5002"],
+                      ]).to_excel(p, header=False, index=False)
+        res = build_draft(read_export(p), load_config(cfg_p), date(2026, 11, 2))
+        self.assertIn("S:5002", list(res.selected["key"]))
+        self.assertIn("S:5001", list(res.reference["key"]))
+
     def test_status_before_ready_time(self):
         res = build_draft(read_export(self.xlsx), self.cfg(), date(2026, 11, 2), now=datetime(2026, 11, 2, 6, 0))
         st = res.paper_status.set_index("매체")["상태"]

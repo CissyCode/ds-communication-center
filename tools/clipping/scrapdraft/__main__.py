@@ -52,6 +52,8 @@ def cmd_recommend(args) -> int:
         "입력 기사 수": len(df), "추천": len(res.selected), "참고": len(res.reference), "제외·중복": len(res.removed),
         "이번 실행 신규 추천": len(new), "전체 상태": res.overall,
         "동일 입력 이전 실행": prev or "", "규칙 해시": cfg.sha256[:12],
+        **({"분량(참고 범위, 자르지 않음)": f"{len(res.selected)}건 / {cfg.volume_range[0]}~{cfg.volume_range[1]}건"}
+           if cfg.volume_range else {}),
     })
     ledger.finish_run(run_id, res.overall, len(res.selected), res.paper_status)
 
