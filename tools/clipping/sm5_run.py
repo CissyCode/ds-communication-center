@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31o"
+VERSION = "2026-10-31p"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -259,9 +259,14 @@ def articles_of(win, group: str) -> list:
 
 
 def set_check(cb, on: bool) -> None:
+    """체크 상태 맞추기. 신호(toggle)로 안 바뀌면 화면 클릭으로 다시 시도."""
+    if bool(cb.get_toggle_state()) == on:
+        return
+    cb.toggle()
+    time.sleep(0.3)
     if bool(cb.get_toggle_state()) != on:
-        cb.toggle()
-        time.sleep(0.2)
+        cb.click_input()
+        time.sleep(0.3)
 
 
 def uncheck_all_scraps(win) -> None:
@@ -497,12 +502,37 @@ def export_search(win, path: Path, keep_options: bool) -> Path:
     return out
 
 
+EXPORT_BUTTONS = ("btnScrapList_SaveToExcelFile_T", "btnScrapList_SaveToExcelFile2", "btnScrapList_SaveToExcelFile")
+
+
 def export_group(win, group: str, path: Path) -> pd.DataFrame:
+    """검토 그룹 기사만 체크하고 스크랩 목록 [엑셀로 내보내기]로 저장."""
     uncheck_all_scraps(win)
     item = group_tree_item(win, group)
-    set_check(find(item, auto_id="cbScrapTreeGroup", control_type="CheckBox"), True)
-    press(need(win, "btnScrapList_SaveToExcelFile_T"))
-    save_dialog(win, path, REQUIRED_COLS)
+    cb = find(item, auto_id="cbScrapTreeGroup", control_type="CheckBox")
+    set_check(cb, True)
+    if not cb.get_toggle_state():
+        raise Stop(f"스크랩 목록에서 '{group}' 그룹을 체크하지 못했습니다.")
+    last_err = None
+    for aid in EXPORT_BUTTONS:          # 화면에 보이는 내보내기 버튼을 차례로 시도
+        btn = by_id(win, aid)
+        try:
+            if btn is None or not btn.is_visible() or btn.rectangle().width() == 0:
+                continue
+        except Exception:
+            continue
+        press(btn)
+        try:
+            save_dialog(win, path, REQUIRED_COLS)
+            break
+        except Stop as e:
+            last_err = e
+            pops = read_popups(win)
+            if not pops[0].startswith("팝업 창이 없습니다"):
+                log("내보내기 뒤 뜬 창: " + " / ".join(x.strip() for x in pops[:8]))
+            dismiss_notices(win)
+    else:
+        raise Stop(f"그룹 엑셀 내보내기에 실패했습니다: {last_err or '보이는 내보내기 버튼이 없습니다'}")
     uncheck_all_scraps(win)
     return read_export(path)
 
