@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31n"
+VERSION = "2026-10-31o"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -195,6 +195,29 @@ def select_group(win, group: str) -> None:
     raise Stop(f"스크랩 그룹 '{group}'이 없습니다.")
 
 
+def close_group_manager(win) -> bool:
+    """'스크랩 그룹 관리' 창이 열려 있으면 [닫기]로 닫는다(그룹 삭제·선택 버튼은 누르지 않음)."""
+    closed = False
+    for w in _process_windows(win)[1:]:
+        try:
+            if w.window_text() != "스크랩 그룹 관리" and not any(
+                    t.window_text() == "스크랩 그룹 관리" for t in w.descendants(control_type="Text")):
+                continue
+            for aid in ("btnClose", "btnCloseWindow", "btnCloseSync"):
+                btn = next((b for b in w.descendants(control_type="Button")
+                            if b.element_info.automation_id == aid and b.is_visible()), None)
+                if btn is not None:
+                    press(btn)
+                    time.sleep(0.5)
+                    closed = True
+                    break
+        except Exception:
+            continue
+    if closed:
+        log("'스크랩 그룹 관리' 창을 닫음")
+    return closed
+
+
 def ensure_group(win, group: str) -> None:
     if group_count(win, group) is not None:
         return
@@ -208,8 +231,7 @@ def ensure_group(win, group: str) -> None:
     box.set_edit_text(group)
     press(add)
     time.sleep(0.8)
-    keyboard.send_keys("{ESC}")
-    time.sleep(0.5)
+    close_group_manager(win)
     if group_count(win, group) is None:
         raise Stop(f"'{group}' 그룹을 만들지 못했습니다. 직접 만든 뒤 다시 실행해 주세요.")
 
@@ -486,6 +508,7 @@ def export_group(win, group: str, path: Path) -> pd.DataFrame:
 
 
 def scrap_rows(win, seqs: list[int]) -> None:
+    close_group_manager(win)   # 남아 있는 그룹 관리 창이 있으면 먼저 닫는다
     r = need(win, "tcSearchResultTab").rectangle()
     result_button(win, "선택 해제")
     click_rel(r, TITLE_DX, FIRST_ROW_DY)
