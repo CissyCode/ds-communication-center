@@ -60,6 +60,7 @@ class Config:
     issues: list[Issue]
     exclude_keywords: list[str]
     exclude_page_prefixes: list[str]
+    exclude_categories: list[str]
     opinion_markers: list[str]
     min_score: float
     front_page_bonus: float
@@ -163,6 +164,7 @@ def load_config(path: str | Path, extra: list[str | Path] | None = None) -> Conf
         issues=issues,
         exclude_keywords=list(c.get("exclude_keywords") or []),
         exclude_page_prefixes=[str(x).upper() for x in c.get("exclude_page_prefixes") or []],
+        exclude_categories=list(c.get("exclude_categories") or []),
         opinion_markers=list(c.get("opinion_markers") or ["사설", "칼럼", "오피니언", "시론", "기고", "논단", "데스크"]),
         min_score=float(scoring.get("min_score", 40)),
         front_page_bonus=float(scoring.get("front_page_bonus", 30)),

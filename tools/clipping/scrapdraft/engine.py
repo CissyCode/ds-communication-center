@@ -119,6 +119,10 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
         if pg and cfg.exclude_page_prefixes and pg[0] in cfg.exclude_page_prefixes:
             df.at[i, "drop_reason"] = f"제외 후보(기획면 {r['page_raw']})"
             continue
+        cat = str(r.get("category") or "").strip()
+        if cat and cat in cfg.exclude_categories:
+            df.at[i, "drop_reason"] = f"제외 후보(카테고리 {cat})"
+            continue
         ex = _hits(r["title"], cfg.exclude_keywords)
         if ex:
             df.at[i, "drop_reason"] = f"제외 후보({', '.join(ex)})"
