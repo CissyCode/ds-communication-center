@@ -44,8 +44,10 @@ BUTTON_DY = -27
 RESULT_BUTTONS = {"전체 선택": 51, "선택 해제": 128, "스크랩": 275, "엑셀 저장": 346}
 PAGE_SIZE = 500   # 검색결과 '500개씩 보기' 기준. 넘으면 멈춤.
 
-SEARCH_COLS = ["기사 제목", "부제목", "매체명", "지면번호", "카테고리", "크기", "발행일", "검색어", "연번", "구분", "기사 시리얼"]
-GROUP_COLS = ["기사 제목", "매체명", "지면번호", "연번", "기사 시리얼"]
+# 저장 항목은 '켜기만' 하고 끄지 않는다(저장 옵션은 계정 단위로 동기화되므로 담당자 설정을 줄이지 않음).
+# 기본으로 켜져 있는 항목: 기사 제목·매체명·지면번호·기자·발행일·검색어·연번·기사 시리얼·스크랩 그룹
+REQUIRED_COLS = ["기사 제목", "매체명", "지면번호", "발행일", "검색어", "연번", "기사 시리얼"]
+SEARCH_EXTRA_COLS = ["카테고리", "크기", "부제목"]   # 광고·스포츠 제외, 크기 점수, 부제목 분류에 필요(--keep-options면 안 켬)
 
 
 class Stop(Exception):
@@ -174,7 +176,7 @@ def uncheck_all_scraps(win) -> None:
 
 # ---------- 저장 창 ----------
 
-def save_dialog(win, path: Path, columns: list[str], scrap_group: bool, timeout=10) -> Path:
+def save_dialog(win, path: Path, columns: list[str], timeout=10) -> Path:
     import win32gui
     import win32process
     pid = win.element_info.process_id
@@ -192,18 +194,23 @@ def save_dialog(win, path: Path, columns: list[str], scrap_group: bool, timeout=
     if dlg is None:
         raise Stop("'다른 이름으로 파일 저장' 창이 뜨지 않았습니다.")
 
-    dlg.child_window(auto_id="rbCustom", control_type="RadioButton").wrapper_object().select()
-    time.sleep(0.2)
+    try:  # 편집 목차 저장 창에만 있는 선택지. 스크랩 목록·검색결과 저장 창에서는 숨겨져 있음
+        rb = dlg.child_window(auto_id="rbCustom", control_type="RadioButton").wrapper_object()
+        if rb.is_visible() and rb.is_enabled():
+            rb.select()
+            time.sleep(0.2)
+    except Exception:
+        pass
     wanted = set(columns)
+    found = set()
     for cb in dlg.descendants(control_type="CheckBox"):
-        aid = cb.element_info.automation_id
         name = cb.window_text()
-        if aid.startswith("ckbcol"):
-            set_check(cb, name in wanted)
-        elif aid == "cbScrapGroup":
-            set_check(cb, scrap_group)
-        elif aid in ("cbStatistic", "cbSubTitle", "cbPdfTableURLLinkUse", "cbSentimentValue"):
-            set_check(cb, False)
+        if cb.element_info.automation_id.startswith("ckbcol") and name in wanted:
+            found.add(name)
+            set_check(cb, True)   # 켜기만 한다
+    missing = wanted - found
+    if missing & set(REQUIRED_COLS):
+        raise Stop(f"저장 창에 필요한 항목이 없습니다: {sorted(missing)}")
     edit = dlg.child_window(auto_id="1148", control_type="Edit").wrapper_object()
     edit.set_edit_text(str(path))
     time.sleep(0.2)
@@ -259,10 +266,10 @@ def open_source_group(win, keyword: str) -> int:
     return n
 
 
-def export_search(win, path: Path) -> Path:
+def export_search(win, path: Path, keep_options: bool) -> Path:
     result_button(win, "전체 선택")
     result_button(win, "엑셀 저장")
-    out = save_dialog(win, path, SEARCH_COLS, scrap_group=False)
+    out = save_dialog(win, path, REQUIRED_COLS + ([] if keep_options else SEARCH_EXTRA_COLS))
     result_button(win, "선택 해제")
     return out
 
@@ -272,7 +279,7 @@ def export_group(win, group: str, path: Path) -> pd.DataFrame:
     item = group_tree_item(win, group)
     set_check(item.child_window(auto_id="cbScrapTreeGroup", control_type="CheckBox").wrapper_object(), True)
     need(win, "btnScrapList_SaveToExcelFile_T").click()
-    save_dialog(win, path, GROUP_COLS, scrap_group=True)
+    save_dialog(win, path, REQUIRED_COLS)
     uncheck_all_scraps(win)
     return read_export(path)
 
@@ -323,6 +330,8 @@ def main() -> int:
     ap.add_argument("--today", default=None)
     ap.add_argument("--refresh-wait", type=int, default=20)
     ap.add_argument("--no-refresh", action="store_true", help="결과 갱신을 건너뜀")
+    ap.add_argument("--keep-options", action="store_true",
+                    help="엑셀 저장 항목을 전혀 바꾸지 않음(카테고리·크기·부제목 없이 선정 — 광고·스포츠 제외 약해짐)")
     args = ap.parse_args()
 
     target = date.fromisoformat(args.date) if args.date else date.today()
@@ -350,8 +359,10 @@ def main() -> int:
         # 2) 후보 내보내기
         n = open_source_group(win, args.source)
         log(f"후보 그룹 '{args.source}' 지면 {n}건 — 엑셀 저장")
-        src = export_search(win, run_dir / f"검색결과_{stamp}.xlsx")
+        src = export_search(win, run_dir / f"검색결과_{stamp}.xlsx", args.keep_options)
         df = read_export(src)
+        # [지면기사] 탭에서 저장했으므로 '구분' 항목이 없으면 지면으로 본다
+        df["kind"] = df["kind"].where(df["kind"].astype(str).str.strip() != "", "지면")
         if len(df) != n:
             raise Stop(f"엑셀 행 수({len(df)})와 화면 건수({n})가 다릅니다.")
         if df["seq"].isna().any():
