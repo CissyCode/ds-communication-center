@@ -66,7 +66,9 @@ def main() -> int:
         for _, title, exe in wins:
             f.write(f"{exe}\t{title!r}\n")
 
+    path = out_dir / f"window_{args.tag}.txt"
     if not targets:
+        path.unlink(missing_ok=True)  # 이전 실행 결과를 새 결과로 착각하지 않도록
         print("스크랩마스터 창을 찾지 못했습니다. 열려 있는 창 목록:", list_path)
         for _, title, exe in wins:
             print(f"  {exe}\t{title}")
@@ -75,7 +77,6 @@ def main() -> int:
         return 1
     print("대상 창:", ", ".join(f"{t} [{e}]" for _, t, e in targets))
 
-    path = out_dir / f"window_{args.tag}.txt"
     total = 0
     with open(path, "w", encoding="utf-8") as f:
         f.write(f"# {datetime.now():%Y-%m-%d %H:%M} / 창 {len(targets)}개\n")
