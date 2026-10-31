@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31q"
+VERSION = "2026-10-31r"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -153,9 +153,27 @@ def result_button(win, name: str):
     click_rel(r, RESULT_BUTTONS[name], BUTTON_DY, from_bottom=True)
 
 
+IGNORED_POPUP_CLASSES = ("Internet Explorer_Hidden",)   # 스크랩마스터가 늘 띄워 두는 보이지 않는 보조 창
+
+
+def real_popups(win) -> list[str]:
+    """read_popups 결과에서 늘 떠 있는 보조 창을 뺀 줄."""
+    out, skip = [], False
+    for line in read_popups(win):
+        if line.startswith("## "):
+            skip = any(c in line for c in IGNORED_POPUP_CLASSES)
+        if line.startswith("팝업 창이 없습니다"):
+            continue
+        if not skip:
+            out.append(line)
+    return out
+
+
 def no_popup_or_stop(win, where: str):
-    pops = read_popups(win)
-    if not pops[0].startswith("팝업 창이 없습니다"):
+    if close_group_manager(win):          # 남아 있던 그룹 관리 창이면 닫고 다시 확인
+        time.sleep(0.5)
+    pops = real_popups(win)
+    if pops:
         raise Stop(f"{where} 뒤에 예상하지 못한 창이 떴습니다:\n" + "\n".join(pops[:40]))
 
 
@@ -541,8 +559,8 @@ def export_group(win, group: str, path: Path) -> pd.DataFrame:
             break
         except Stop as e:
             last_err = e
-            pops = read_popups(win)
-            if not pops[0].startswith("팝업 창이 없습니다"):
+            pops = real_popups(win)
+            if pops:
                 log("내보내기 뒤 뜬 창: " + " / ".join(x.strip() for x in pops[:8]))
             dismiss_notices(win)
     else:
