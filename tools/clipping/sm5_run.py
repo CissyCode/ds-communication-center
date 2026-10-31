@@ -33,10 +33,10 @@ from scrapdraft.engine import build_draft
 from scrapdraft.excel_io import file_sha256, read_export
 from scrapdraft.ledger import Ledger
 from scrapdraft.report import write_report
-from sm5_read import OUT, by_id, main_window, read_keywords, read_popups, texts
+from sm5_read import OUT, by_id, expand_search_folders, main_window, read_keywords, read_popups, texts
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31d"
+VERSION = "2026-10-31e"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -253,6 +253,8 @@ def open_source_group(win, spec: str) -> int:
     """spec: '검색어' 또는 '검색어@매체수'(같은 검색어가 여러 개일 때, 예: '삼성 반도체@3' = 석간 3개 매체용)."""
     keyword, _, media_n = spec.partition("@")
     tree = need(win, "treeSearchResultGroups")
+    expand_search_folders(tree)
+    time.sleep(0.5)
     target = None
     for item in tree.descendants(control_type="TreeItem"):
         if item.element_info.name != "ScrapMaster5.SearchGroup":
@@ -265,7 +267,7 @@ def open_source_group(win, spec: str) -> int:
         target = item
         break
     if target is None:
-        raise Stop(f"검색어 그룹 '{spec}'을 찾지 못했습니다.")
+        raise Stop(f"검색어 그룹 '{spec}'을 찾지 못했습니다. [검색] 탭 왼쪽 '관심 키워드' 목록이 펼쳐져 있는지 확인해 주세요.")
     label = [x for x in texts(target) if x.strip() == keyword]
     (find(target, title=label[0], control_type="Text") if label else target).click_input()
     time.sleep(2.0)
@@ -375,6 +377,8 @@ def main() -> int:
             kw_lines = read_keywords(win)
         (run_dir / "keywords.txt").write_text("\n".join(kw_lines), encoding="utf-8")
         log(f"검색어 {len(kw_lines)}개 건수 기록")
+        if not kw_lines:
+            raise Stop("검색어 목록을 읽지 못했습니다. [검색] 탭 왼쪽 '관심 키워드'를 펼쳐 둔 뒤 다시 실행해 주세요.")
 
         # 2) 후보 내보내기(검색어 그룹별)
         sources = args.source or ["삼성 반도체"]

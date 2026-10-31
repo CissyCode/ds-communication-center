@@ -49,10 +49,22 @@ def texts(elem) -> list[str]:
     return out
 
 
+def expand_search_folders(tree) -> None:
+    """'관심 키워드' 등 폴더가 접혀 있으면 하위 검색어 그룹이 화면 정보에 안 나오므로 펼친다."""
+    for item in tree.children(control_type="TreeItem"):
+        if item.element_info.name == "ScrapMaster5.SearchGroupFolder":
+            try:
+                if item.get_expand_state() != 1:  # 1 = 펼침
+                    item.expand()
+            except Exception:
+                pass
+
+
 def read_keywords(win) -> list[str]:
     tree = by_id(win, "treeSearchResultGroups")
     if tree is None:
         return ["[검색] 탭을 연 상태에서 실행해 주세요."]
+    expand_search_folders(tree)
     lines = []
     for item in tree.descendants(control_type="TreeItem"):
         if item.element_info.name != "ScrapMaster5.SearchGroup":
