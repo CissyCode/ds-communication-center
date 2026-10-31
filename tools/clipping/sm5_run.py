@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31w"
+VERSION = "2026-10-31x"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -649,13 +649,6 @@ def _container_elements(item) -> list:
     return out
 
 
-def _rid(el) -> tuple:
-    try:
-        return tuple(el.GetRuntimeId())
-    except Exception:
-        return ()
-
-
 def _expanded_group(win, group: str):
     item = group_tree_item(win, group)
     if item.get_expand_state() != 1:
@@ -711,54 +704,69 @@ def _dump_tree(win, group: str, note: str) -> None:
         log(f"진단 기록 실패: {e}")
 
 
-def _bring_into_view(win, group: str, idx: int, total: int):
-    """idx번째 기사가 화면에 보이게 스크롤하고, 그 항목(보이는 래퍼)을 돌려준다."""
-    from pywinauto.uia_defines import get_elem_interface
-
+def _scroll_top(win, group: str) -> None:
+    """스크랩 목록을 맨 위로 스크롤(그룹 머리줄이 보이게)."""
     tree = need(win, "treeScrapArticleList")
-    tr = tree.rectangle()
-    centre = ((tr.left + tr.right) // 2, (tr.top + tr.bottom) // 2)
-    last_vis = None
-    for step in range(80):
-        els = _article_elements(win, group)
-        if len(els) != total:
-            raise Stop(f"정렬 중 그룹 기사 수가 바뀌었습니다({len(els)} ≠ {total}). 멈춥니다.")
-        target = els[idx]
-        if step == 0:
-            try:   # 가상 항목이면 실체화(WPF는 이때 해당 항목 쪽으로 스크롤하기도 함)
-                get_elem_interface(target, "VirtualizedItem").Realize()
-                time.sleep(0.4)
-                els = _article_elements(win, group)
-                target = els[idx]
-            except Exception:
-                pass
-            try:
-                get_elem_interface(target, "ScrollItem").ScrollIntoView()
-                time.sleep(0.4)
-            except Exception:
-                pass
-        want = _rid(target)
-        pos = {_rid(e): i for i, e in enumerate(els)}
-        vis = _visible_articles(win, group)
-        for k in vis:
-            if want and tuple(k.element_info.runtime_id or ()) == want:
+    try:
+        tree.iface_scroll.SetScrollPercent(-1, 0)   # -1 = 가로는 그대로
+    except Exception:
+        r = tree.rectangle()
+        mouse.scroll(coords=((r.left + r.right) // 2, (r.top + r.bottom) // 2), wheel_dist=40)
+    time.sleep(0.4)
+
+
+def _selected_article(win, group: str):
+    for k in _visible_articles(win, group):
+        try:
+            if k.is_selected():
                 return k
-        idxs = sorted(pos[r] for r in (tuple(k.element_info.runtime_id or ()) for k in vis) if r in pos)
-        if idxs and idxs[0] <= idx <= idxs[-1]:
-            # 범위 안인데 일치가 없으면 아이디가 안 맞는 것 — 위치(순번)로 고른다
-            by_top = sorted(vis, key=lambda k: k.rectangle().top)
-            first = idxs[0]
-            if 0 <= idx - first < len(by_top) and len(idxs) == len(by_top):
-                return by_top[idx - first]
-        if idxs and idxs == last_vis and step > 3:
-            break   # 더 이상 스크롤되지 않음
-        last_vis = idxs
-        down = (not idxs) or idx > idxs[-1]
-        gap = (idx - idxs[-1]) if (idxs and down) else ((idxs[0] - idx) if idxs else 3)
-        mouse.scroll(coords=centre, wheel_dist=-max(1, min(5, gap // 3 + 1)) if down else max(1, min(5, gap // 3 + 1)))
-        time.sleep(0.35)
-    _dump_tree(win, group, f"idx={idx} total={total}")
-    raise Stop(f"{idx + 1}번째 기사를 화면에 띄우지 못했습니다(스크롤 실패).")
+        except Exception:
+            pass
+    for k in _visible_articles(win, group):
+        try:
+            if k.has_keyboard_focus():
+                return k
+        except Exception:
+            pass
+    return None
+
+
+def _focus_article(win, group: str, idx: int):
+    """idx번째(0부터) 기사로 키보드로 이동해, 화면에 보이는 그 항목을 돌려준다.
+
+    맨 위로 스크롤 → 첫 기사 줄 클릭 → ↓ idx번. 목록이 알아서 그 기사까지 스크롤하고 선택한다.
+    (화면 밖 기사를 아이디로 찾는 방식은 이 프로그램에서 엉뚱한 기사를 골라서 쓰지 않는다.)"""
+    _scroll_top(win, group)
+    vis = sorted(_visible_articles(win, group), key=lambda k: k.rectangle().top)
+    if not vis:
+        raise Stop("스크랩 목록에 보이는 기사가 없습니다.")
+    head = group_tree_item(win, group).rectangle()
+    tr = need(win, "treeScrapArticleList").rectangle()
+    if head.top < tr.top or head.bottom > tr.bottom:
+        raise Stop("스크랩 목록이 맨 위로 스크롤되지 않았습니다.")
+    first = vis[0]
+    r = first.rectangle()
+    cbs = first.descendants(control_type="CheckBox")
+    x = (cbs[0].rectangle().right + 60) if cbs else (r.left + r.width() // 2)
+    mouse.click(coords=(min(x, r.right - 5), (r.top + r.bottom) // 2))   # 체크박스가 아닌 줄을 눌러 선택
+    time.sleep(0.3)
+    if idx:
+        keyboard.send_keys("{DOWN %d}" % idx)
+        time.sleep(0.3 + min(1.5, idx * 0.015))
+    sel = _selected_article(win, group)
+    if sel is None:
+        _dump_tree(win, group, f"focus idx={idx}")
+        raise Stop(f"{idx + 1}번째 기사로 이동하지 못했습니다(선택된 줄 없음).")
+    return sel
+
+
+def _top_checked(win, group: str) -> bool | None:
+    _scroll_top(win, group)
+    vis = sorted(_visible_articles(win, group), key=lambda k: k.rectangle().top)
+    if not vis:
+        return None
+    cbs = vis[0].descendants(control_type="CheckBox")
+    return bool(cbs[0].get_toggle_state()) if cbs else None
 
 
 def plan_moves(current: list[str], desired: list[str]) -> list[str]:
@@ -776,8 +784,9 @@ def plan_moves(current: list[str], desired: list[str]) -> list[str]:
     return list(reversed(desired[:k]))
 
 
-def reorder(win, group: str, current: list[str], desired: list[str]) -> None:
-    """current: 지금 순서의 Serial 키 목록. desired: 원하는 순서. 뒤에서부터 [맨 위로]."""
+def reorder(win, group: str, current: list[str], desired: list[str], check_export=None) -> None:
+    """current: 지금 순서의 Serial 키 목록. desired: 원하는 순서. 어긋난 기사만 뒤에서부터 [맨 위로].
+    check_export: 첫 이동 뒤 그룹 순서를 확인할 함수(키 목록 반환). 첫 이동이 틀리면 바로 멈춘다."""
     order = list(current)
     total = len(order)
     uncheck_all_scraps(win)
@@ -786,11 +795,12 @@ def reorder(win, group: str, current: list[str], desired: list[str]) -> None:
         raise Stop(f"스크랩 목록에서 읽은 기사 수({len(els)})가 그룹 엑셀({total})과 다릅니다. 멈춥니다.")
     moves = plan_moves(order, desired)
     log(f"정렬 시작: {len(desired)}건 중 {len(moves)}건 이동")
+    verify_top = True
     for n, key in enumerate(moves, 1):
         idx = order.index(key)
         if idx == 0:
             continue
-        art = _bring_into_view(win, group, idx, total)
+        art = _focus_article(win, group, idx)
         cbs = art.descendants(control_type="CheckBox")
         if not cbs:
             _dump_tree(win, group, f"no checkbox idx={idx}")
@@ -805,12 +815,19 @@ def reorder(win, group: str, current: list[str], desired: list[str]) -> None:
             raise Stop("[맨 위로] 버튼이 보이지 않습니다.")
         time.sleep(0.5)
         order.insert(0, order.pop(idx))
+        if verify_top:   # '이동 시 체크 유지' 옵션이 켜져 있으면 맨 위 기사가 체크된 채로 있어야 한다
+            t = _top_checked(win, group)
+            if t is False and n == 1:
+                log("참고: 이동 뒤 체크가 풀림('체크 유지' 옵션 꺼짐) — 이동별 확인은 생략")
+                verify_top = False
+            elif t is False:
+                raise Stop(f"{n}번째 이동 뒤 맨 위 기사가 옮긴 기사가 아닙니다. 멈춥니다.")
         uncheck_all_scraps(win)
-        if n == 1:   # 첫 이동이 실제로 맨 위로 갔는지 확인(아이디가 유지되는 경우에만 판단 가능)
-            moved = tuple(art.element_info.runtime_id or ())
-            top = _rid(_article_elements(win, group)[0])
-            if moved and top and moved != top:
-                log("주의: 첫 이동 뒤 맨 위 항목 아이디가 다릅니다(최종 검증에서 다시 확인).")
+        if n == 1 and check_export is not None:
+            got = check_export()
+            if not got or got[0] != key:
+                raise Stop("첫 이동 결과가 계획과 다릅니다(엉뚱한 기사가 올라감). 30분 돌기 전에 멈춥니다.")
+            log("첫 이동 확인 통과(엑셀로 확인)")
         if n % 10 == 0:
             log(f"정렬 진행 {n}/{len(moves)}")
 
@@ -975,7 +992,8 @@ def main() -> int:
             moves = plan_moves(list(after["key"]), desired)
             if moves:
                 log(f"담긴 순서와 추천 순서가 {len(moves)}건 다름 — 정렬 진행")
-                reorder(win, group, list(after["key"]), desired)
+                reorder(win, group, list(after["key"]), desired,
+                        check_export=lambda: list(export_group(win, group, run_dir / f"검토그룹_첫이동_{stamp}.xlsx")["key"]))
             else:
                 log("담긴 순서가 이미 추천 순서와 같음 — 정렬 생략")
             final = export_group(win, group, run_dir / f"검토그룹_정렬후_{stamp}.xlsx")
