@@ -156,6 +156,10 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
         alerts.append(", ".join(_hits(f"{r['title']} {r['subtitle']}", cfg.alert_keywords)))
         if extra_note:
             df.at[_, "note"] += extra_note
+        for hint in cfg.hints:  # 위치는 그대로, 사람이 판단할 수 있게 메모만
+            if _hits(f"{r['title']} {r['subtitle']}", hint.get("keywords") or []) \
+                    and (not hint.get("when_section") or sec == hint["when_section"]):
+                df.at[_, "note"] += f"{hint.get('note', '')}; "
         score, pin, bundle = w, False, ""
         for iss in cfg.issues:
             if not iss.active(target_date):

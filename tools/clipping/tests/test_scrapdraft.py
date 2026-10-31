@@ -243,6 +243,20 @@ class ScrapDraftTest(unittest.TestCase):
         self.assertEqual(len({sel.at[k, "cluster"] for k in ("S:7001", "S:7002", "S:7003")}), 1)
         self.assertEqual(sum(1 for k in sel.index if sel.at[k, "toc"] == "표시"), 1, "목차엔 대표 1건")
 
+    def test_hint_note_only(self):
+        """hints는 위치를 바꾸지 않고 확인 메모만 남긴다."""
+        base = (HERE / "tests" / "fixture_config.yaml").read_text(encoding="utf-8")
+        base += "hints:\n  - {keywords: [가나 회장], when_section: 관계사, note: '핵심 > 현안 가능(확인)'}\n"
+        cfg_p = self.tmp / "cfg6.yaml"
+        cfg_p.write_text(base, encoding="utf-8")
+        p = self.tmp / "mini6.xlsx"
+        pd.DataFrame([HEADER, [1, "가나전자 가나 회장 추모 음악회", "", "매일경제", "A37", D, "지면", "사람", "20 x 30㎝", "가나", "8001"]]
+                     ).to_excel(p, header=False, index=False)
+        res = build_draft(read_export(p), load_config(cfg_p), date(2026, 11, 2))
+        sel = res.selected.set_index("key")
+        self.assertEqual(sel.at["S:8001", "section"], "관계사")
+        self.assertIn("현안 가능", sel.at["S:8001", "note"])
+
     def test_status_before_ready_time(self):
         res = build_draft(read_export(self.xlsx), self.cfg(), date(2026, 11, 2), now=datetime(2026, 11, 2, 6, 0))
         st = res.paper_status.set_index("매체")["상태"]

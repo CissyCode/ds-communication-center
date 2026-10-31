@@ -82,6 +82,7 @@ class Config:
     body_factor: float = 0.5          # 제목엔 없고 본문(검색어)에서만 걸린 기사의 점수 비율. 이 경우 1면·크기 가점 없음
     require_byline: bool = False      # 기자명이 없으면 기사로 보지 않음(사설·칼럼 제외)
     force_sections: list[dict] = field(default_factory=list)  # 제목에 이 말이 있으면 해당 소제목으로(예: 증시·부동산 → 기타)
+    hints: list[dict] = field(default_factory=list)   # 제목에 이 말이 있으면 '확인 메모'만 남김(위치는 바꾸지 않음)
     toc_max: int = 1                  # 묶음(같은 사안·연결기사)에서 목차에 표시할 건수
     alert_keywords: list[str] = field(default_factory=list)   # '우선 검토' 표시(배열과 별개)
     volume_range: tuple[int, int] | None = None               # 분량 참고 범위(자르지 않음)
@@ -214,6 +215,7 @@ def load_config(path: str | Path, extra: list[str | Path] | None = None) -> Conf
         body_factor=float(c.get("body_factor", 0.5)),
         require_byline=bool(c.get("require_byline", False)),
         force_sections=list(c.get("force_sections") or []),
+        hints=list(c.get("hints") or []),
         toc_max=int(c.get("toc_max", 1)),
         alert_keywords=list(c.get("alert_keywords") or []),
         volume_range=tuple(c["volume_range"]) if c.get("volume_range") else None,
