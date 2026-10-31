@@ -16,13 +16,14 @@ from pathlib import Path
 
 import win32api
 import win32con
+import win32gui
 import win32process
 from pywinauto import Desktop
 
 # 스크랩마스터가 아닌 것이 확실한 프로그램(브라우저·탐색기·터미널·파이썬)
 SKIP_EXE = ("chrome.exe", "msedge.exe", "whale.exe", "firefox.exe", "iexplore.exe", "explorer.exe",
             "windowsterminal.exe", "powershell.exe", "pwsh.exe", "cmd.exe", "python.exe", "code.exe", "notepad.exe")
-EXE_HINTS = ("scrapmaster", "sm5")            # 실행 파일 이름
+EXE_HINTS = ("scrap", "sm5", "dahami")        # 실행 파일 이름
 TITLE_HINTS = ("스크랩마스터", "scrapmaster", "scrap master")  # 창 제목
 
 
@@ -46,11 +47,17 @@ def main() -> int:
     out_dir = Path(__file__).resolve().parent / "output"
     out_dir.mkdir(exist_ok=True)
 
+    # 보이는 최상위 창을 Win32로 모두 모은다(UIA 목록에 안 나오는 창까지)
+    hwnds = []
+    win32gui.EnumWindows(lambda h, acc: acc.append(h) if win32gui.IsWindowVisible(h) else None, hwnds)
     wins = []
-    for w in Desktop(backend="uia").windows():
-        title = w.window_text() or ""
-        exe = exe_of(w.element_info.process_id)
-        wins.append((w, title, exe))
+    for h in hwnds:
+        title = win32gui.GetWindowText(h) or ""
+        _, pid = win32process.GetWindowThreadProcessId(h)
+        exe = exe_of(pid)
+        if not title and exe == "?":
+            continue
+        wins.append((h, title, exe))
 
     if args.title:
         targets = [x for x in wins if args.title in x[1]]
@@ -71,7 +78,8 @@ def main() -> int:
         path.unlink(missing_ok=True)  # 이전 실행 결과를 새 결과로 착각하지 않도록
         print("스크랩마스터 창을 찾지 못했습니다. 열려 있는 창 목록:", list_path)
         for _, title, exe in wins:
-            print(f"  {exe}\t{title}")
+            if title:
+                print(f"  {exe}\t{title}")
         print("스크랩마스터가 실행 중인지 확인하고, 위 목록에서 스크랩마스터 줄을 알려 주세요.")
         print("창을 직접 지정하려면: python inspect_window.py 검색 --title 창제목일부")
         return 1
@@ -80,8 +88,9 @@ def main() -> int:
     total = 0
     with open(path, "w", encoding="utf-8") as f:
         f.write(f"# {datetime.now():%Y-%m-%d %H:%M} / 창 {len(targets)}개\n")
-        for w, title, exe in targets:
+        for h, title, exe in targets:
             f.write(f"\n## {title}  [{exe}]\n")
+            w = Desktop(backend="uia").window(handle=h)
             for c in w.descendants():
                 total += 1
                 try:
