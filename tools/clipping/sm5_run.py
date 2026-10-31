@@ -36,7 +36,7 @@ from scrapdraft.report import write_report
 from sm5_read import OUT, WINDOW_TITLE, by_id, expand_search_folders, read_keywords, read_popups, texts
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31k"
+VERSION = "2026-10-31l"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -53,6 +53,10 @@ SEARCH_EXTRA_COLS = ["카테고리", "크기", "부제목"]   # 광고·스포�
 
 class Stop(Exception):
     """안전하게 멈춰야 하는 상황."""
+
+
+class SkipGroup(Stop):
+    """이 검색어 그룹만 건너뛰고 나머지는 계속해도 되는 상황."""
 
 
 def log(msg: str) -> None:
@@ -364,12 +368,30 @@ def open_source_group(win, spec: str) -> int:
         break
     if target is None:
         raise Stop(f"검색어 그룹 '{spec}'을 찾지 못했습니다. [검색] 탭 왼쪽 '관심 키워드' 목록이 펼쳐져 있는지 확인해 주세요.")
-    label = [x for x in texts(target) if x.strip() == keyword]
-    (find(target, title=label[0], control_type="Text") if label else target).click_input()
-    time.sleep(2.0)
-    kw = by_id(win, "tbCurrentSearchResultKeywordInfo1")
-    if kw is None or kw.window_text().strip() != keyword:
-        raise Stop(f"검색결과가 '{keyword}'로 바뀌지 않았습니다.")
+    def switched() -> bool:
+        kw = by_id(win, "tbCurrentSearchResultKeywordInfo1")
+        return kw is not None and kw.window_text().strip() == keyword
+
+    if not switched():
+        try:
+            target.select()          # 목록에서 선택(화면 밖에 있어도 동작)
+        except Exception:
+            pass
+        end = time.time() + 4
+        while time.time() < end and not switched():
+            time.sleep(0.5)
+    if not switched():
+        try:
+            target.scroll_into_view() if hasattr(target, "scroll_into_view") else None
+        except Exception:
+            pass
+        label = [x for x in texts(target) if x.strip() == keyword]
+        (find(target, title=label[0], control_type="Text") if label else target).click_input()
+        end = time.time() + 10       # 결과가 많은 그룹은 바뀌는 데 시간이 걸린다
+        while time.time() < end and not switched():
+            time.sleep(0.5)
+    if not switched():
+        raise SkipGroup(f"검색결과가 '{keyword}'로 바뀌지 않았습니다.")
     tab = need(win, "tcSearchResultTab")
     for ti in tab.children(control_type="TabItem"):
         if "지면기사" in texts(ti):
@@ -378,7 +400,7 @@ def open_source_group(win, spec: str) -> int:
     cnt = by_id(win, "tbCurrentSearchResultCount").window_text()
     n = int(cnt.split("/")[0].strip() or 0)
     if n > PAGE_SIZE:
-        raise Stop(f"검색결과가 {n}건으로 한 페이지({PAGE_SIZE}건)를 넘습니다. 검색어 조건을 좁혀 주세요.")
+        raise SkipGroup(f"'{keyword}' 검색결과가 {n}건으로 한 페이지({PAGE_SIZE}건)를 넘습니다. 검색어 조건을 좁혀 주세요.")
     return n
 
 
@@ -482,8 +504,16 @@ def main() -> int:
             sources = list_source_groups(win)
             log(f"검색어 그룹 {len(sources)}개(지면 결과 있는 것)를 후보로 사용")
         parts, src = [], None
+        skipped = []
         for i, spec in enumerate(sources, 1):
-            n = open_source_group(win, spec)
+            try:
+                n = open_source_group(win, spec)
+            except SkipGroup as e:
+                if len(sources) == 1:
+                    raise
+                log(f"건너뜀: {e}")
+                skipped.append(spec)
+                continue
             log(f"후보 그룹 '{spec}' 지면 {n}건 — 엑셀 저장")
             if n == 0:
                 continue
@@ -502,6 +532,9 @@ def main() -> int:
             parts.append(part)
         if not parts:
             raise Stop("후보 검색어 그룹에 지면 기사가 없습니다.")
+        if skipped:
+            log(f"건너뛴 검색어 그룹 {len(skipped)}개: {skipped}")
+            (run_dir / "skipped_groups.txt").write_text("\n".join(skipped), encoding="utf-8")
         df = pd.concat(parts, ignore_index=True)  # 같은 기사는 엔진이 Serial로 1건으로 합침(먼저 나온 그룹 기준)
 
         # 3) 엔진
