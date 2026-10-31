@@ -222,6 +222,27 @@ class ScrapDraftTest(unittest.TestCase):
         self.assertNotEqual(sel.at["S:6009", "subtopic"] if "S:6009" in sel.index else "", "현안",
                             "다른 회사 노조 기사는 현안 아님")
 
+    def test_entity_bundle_and_page_except(self):
+        """경쟁사 같은 기업 기사는 제목이 달라도 한 묶음(목차 1건), 지정 신문은 B면도 유지."""
+        base = (HERE / "tests" / "fixture_config.yaml").read_text(encoding="utf-8")
+        base = base.replace("      - {name: 반도체 업계, keywords: [다라반도체, HBM, 메모리]}",
+                            "      - {name: 경쟁사, ordered: true, bundle_by_entity: true, keywords: [다라반도체, 마바테크]}")
+        base = base.replace("exclude_page_prefixes: [B, C]", "exclude_page_prefixes: [B, C]\nexclude_page_except: [한국경제]")
+        cfg_p = self.tmp / "cfg5.yaml"
+        cfg_p.write_text(base, encoding="utf-8")
+        p = self.tmp / "mini5.xlsx"
+        pd.DataFrame([HEADER,
+                      [1, "다라반도체 100조 팔아 80조 남겨", "", "매일경제", "A1", D, "지면", "산업", "20 x 30㎝", "반도체", "7001"],
+                      [2, "다라반도체 배당 30조 자사주 30조", "", "서울경제", "A3", D, "지면", "산업", "20 x 30㎝", "반도체", "7002"],
+                      [3, "다라반도체 사장 주주 달래기", "", "한국경제", "A3", D, "지면", "산업", "20 x 30㎝", "반도체", "7003"],
+                      [4, "다라반도체 데이터 저장 호황", "", "한국경제", "B4", D, "지면", "산업", "20 x 30㎝", "반도체", "7004"],
+                      ]).to_excel(p, header=False, index=False)
+        res = build_draft(read_export(p), load_config(cfg_p), date(2026, 11, 2))
+        sel = res.selected.set_index("key")
+        self.assertIn("S:7004", list(sel.index), "예외 신문은 B면도 유지")
+        self.assertEqual(len({sel.at[k, "cluster"] for k in ("S:7001", "S:7002", "S:7003")}), 1)
+        self.assertEqual(sum(1 for k in sel.index if sel.at[k, "toc"] == "표시"), 1, "목차엔 대표 1건")
+
     def test_status_before_ready_time(self):
         res = build_draft(read_export(self.xlsx), self.cfg(), date(2026, 11, 2), now=datetime(2026, 11, 2, 6, 0))
         st = res.paper_status.set_index("매체")["상태"]

@@ -16,6 +16,7 @@ class Subtopic:
     ordered: bool = False   # true면 keywords 순서가 소주제 안 배열 순서(예: 경쟁사 SK하이닉스 → 마이크론 → …)
     max_items: int | None = None          # 이 소주제 추천 상한(예: 증시·시황 2건). 나머지는 '참고'
     cap_exempt: list[str] = field(default_factory=list)  # 제목에 이 말이 있으면 상한에서 제외(예: 삼성전자)
+    bundle_by_entity: bool = False        # 같은 기업(키워드)을 다룬 기사끼리 한 묶음(예: 경쟁사 SK하이닉스 실적·주주환원)
 
 
 @dataclass
@@ -67,6 +68,7 @@ class Config:
     issues: list[Issue]
     exclude_keywords: list[str]
     exclude_page_prefixes: list[str]
+    exclude_page_except: list[str]
     exclude_categories: list[str]
     opinion_markers: list[str]
     min_score: float
@@ -170,7 +172,8 @@ def load_config(path: str | Path, extra: list[str | Path] | None = None) -> Conf
     sections = []
     for s in c.get("sections") or []:
         subs = [Subtopic(t["name"], list(t.get("keywords") or []), bool(t.get("ordered", False)),
-                         int(t["max_items"]) if t.get("max_items") else None, list(t.get("cap_exempt") or []))
+                         int(t["max_items"]) if t.get("max_items") else None, list(t.get("cap_exempt") or []),
+                         bool(t.get("bundle_by_entity", False)))
                 for t in s.get("subtopics") or []]
         sections.append(Section(
             name=s["name"], keywords=list(s.get("keywords") or []), weight=float(s.get("weight", 50)),
@@ -197,6 +200,7 @@ def load_config(path: str | Path, extra: list[str | Path] | None = None) -> Conf
         issues=issues,
         exclude_keywords=list(c.get("exclude_keywords") or []),
         exclude_page_prefixes=[str(x).upper() for x in c.get("exclude_page_prefixes") or []],
+        exclude_page_except=list(c.get("exclude_page_except") or []),
         exclude_categories=list(c.get("exclude_categories") or []),
         opinion_markers=list(c.get("opinion_markers") or ["사설", "칼럼", "오피니언", "시론", "기고", "논단", "데스크"]),
         min_score=float(scoring.get("min_score", 40)),

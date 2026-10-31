@@ -132,7 +132,8 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
                 df.at[i, "drop_reason"] = "제외 후보(바이라인 없음 — 기사 아님)"
                 continue
         pg = str(r["page_raw"]).strip().upper()
-        if pg and cfg.exclude_page_prefixes and pg[0] in cfg.exclude_page_prefixes:
+        if pg and cfg.exclude_page_prefixes and pg[0] in cfg.exclude_page_prefixes \
+                and r["paper"] not in cfg.exclude_page_except:
             df.at[i, "drop_reason"] = f"제외 후보(기획면 {r['page_raw']})"
             continue
         cat = str(r.get("category") or "").strip()
@@ -217,6 +218,17 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             n += 1
             for i in members:
                 df.at[i, "cluster"] = f"G{n}({len(members)}건)"
+    # 같은 기업 묶음(bundle_by_entity): 제목이 달라도 같은 소주제·같은 기업 기사는 한 묶음
+    ent_sub = {(sec.name, st.name): st for sec in cfg.sections for st in sec.subtopics if st.bundle_by_entity}
+    if ent_sub:
+        live2 = df[(df["drop_reason"] == "") & (df["cluster"] == "")]
+        for (sec, sub, rk), g in live2.groupby(["section", "subtopic", "subrank"]):
+            st = ent_sub.get((sec, sub))
+            if st is None or len(g) < 2:
+                continue
+            ent = st.keywords[int(rk)] if int(rk) < len(st.keywords) else sub
+            for i in g.index:
+                df.at[i, "cluster"] = f"{ent}({len(g)}건)"
     # 현안 묶음(bundle: true): 제목이 달라도 같은 현안 기사는 한 묶음(사설·칼럼 포함)
     for name, g in df[(df["drop_reason"] == "") & (df["bundle"] != "")].groupby("bundle"):
         if len(g) > 1:
