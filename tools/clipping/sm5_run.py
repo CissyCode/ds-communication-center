@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-11-01n"
+VERSION = "2026-11-01o"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -844,47 +844,81 @@ def _native_first(elem, auto_id: str):
     return _wrap(els[0]) if els else None
 
 
-def _focus_article(win, group: str, idx: int):
-    """idx번째(0부터) 기사로 키보드로 이동해 그 항목을 돌려준다.
-    맨 위로 스크롤 → 그룹 머리줄(이름 부분) 클릭 → ↓ (idx+1)번 → 포커스된 항목. 목록 전체를 읽지 않아 빠르다."""
+def _focused_info() -> str:
+    try:
+        from pywinauto.uia_defines import IUIA
+        el = IUIA().get_focused_element()
+        return f"{el.CurrentControlType}/{el.CurrentName!r}/{el.CurrentAutomationId!r}/{el.CurrentClassName!r}"
+    except Exception as e:
+        return f"?({e})"
+
+
+def _focused_article():
+    """키보드 포커스가 있는 기사 항목(포커스가 기사 안의 하위 요소면 그 기사)."""
     from pywinauto.uia_defines import IUIA
     from sm5_read import _wrap
-    _scroll_top(win, group)
+    try:
+        w = _wrap(IUIA().get_focused_element())
+    except Exception:
+        return None
+    for _ in range(6):
+        if w is None:
+            return None
+        if w.element_info.name == "ScrapMaster5.Article":
+            return w
+        try:
+            w = w.parent()
+        except Exception:
+            return None
+    return None
+
+
+def _first_visible_article(win, group: str):
+    """맨 위로 스크롤된 상태에서 첫 번째 기사 항목(빠른 검색)."""
+    from sm5_read import _find_all, _uia, _wrap
     head = group_tree_item(win, group)
-    cb = _native_first(head, "cbScrapTreeGroup")
-    if cb is None:
-        raise Stop("그룹 머리줄을 찾지 못했습니다.")
-    r = cb.rectangle()
     tr = need(win, "treeScrapArticleList").rectangle()
-    if r.height() == 0 or r.top < tr.top or r.bottom > tr.bottom:
+    els = _find_all(head.element_info.element, _uia().UIA_dll.UIA_NamePropertyId, "ScrapMaster5.Article")
+    best = None
+    for e in els:
+        try:
+            r = e.CurrentBoundingRectangle
+        except Exception:
+            continue
+        if r.bottom - r.top > 0 and r.top >= tr.top and r.bottom <= tr.bottom:
+            if best is None or r.top < best[0]:
+                best = (r.top, e)
+    return _wrap(best[1]) if best else None
+
+
+def _focus_article(win, group: str, idx: int):
+    """idx번째(0부터) 기사로 키보드로 이동해 그 항목을 돌려준다.
+    맨 위로 스크롤 → 첫 기사 줄(체크박스 아닌 곳) 클릭 → ↓ idx번 → 포커스된 기사."""
+    _scroll_top(win, group)
+    if not _header_visible(win, group):
         raise Stop("스크랩 목록이 맨 위로 스크롤되지 않았습니다.")
-    mouse.click(coords=(min(r.right + 90, tr.right - 30), (r.top + r.bottom) // 2))   # 그룹 이름 쪽(체크박스 아님)
-    time.sleep(0.3)
-    gap = idx + 1
+    first = _first_visible_article(win, group)
+    if first is None:
+        raise Stop("스크랩 목록 첫 기사를 찾지 못했습니다.")
+    r = first.rectangle()
+    cbs = first.descendants(control_type="CheckBox")
+    x = (cbs[0].rectangle().right + 60) if cbs else (r.left + r.width() // 2)
+    mouse.click(coords=(min(x, r.right - 10), (r.top + r.bottom) // 2))
+    time.sleep(0.35)
+    if _focused_article() is None:
+        raise Stop(f"첫 기사 줄을 눌렀는데 포커스가 기사에 없습니다(포커스: {_focused_info()}).")
+    gap = idx
     while gap > 0:
         step = min(gap, 15)
         keyboard.send_keys("{DOWN %d}" % step)
         time.sleep(0.08 + 0.01 * step)
         gap -= step
     time.sleep(0.3)
-    try:
-        el = IUIA().get_focused_element()
-        w = _wrap(el)
-        if w.element_info.name == "ScrapMaster5.Article":
-            return w
-        # 포커스가 체크박스 등 하위 요소면 위로 올라가 기사 항목을 찾는다
-        p = w.parent()
-        while p is not None and p.element_info.name != "ScrapMaster5.Article":
-            p = p.parent()
-        if p is not None:
-            return p
-    except Exception:
-        pass
-    sel = _selected_article(win, group)
-    if sel is None:
-        _dump_tree(win, group, f"focus idx={idx}")
-        raise Stop(f"{idx + 1}번째 기사로 이동하지 못했습니다(선택된 줄 없음).")
-    return sel
+    art = _focused_article()
+    if art is None:
+        _dump_tree(win, group, f"focus idx={idx} focused={_focused_info()}")
+        raise Stop(f"{idx + 1}번째 기사로 이동하지 못했습니다(포커스: {_focused_info()}).")
+    return art
 
 
 def _top_checked(win, group: str) -> bool | None:
