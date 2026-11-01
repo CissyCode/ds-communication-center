@@ -414,13 +414,18 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             selected = pd.concat([selected, extra])
         if (selected["link"] != "").any():
             selected = order_articles(selected, cfg)
-    # 분량 상한: 점수 높은 순으로 max_total건만 추천, 나머지는 '참고'(삭제 아님). 고정(pin) 현안은 항상 유지
+    # 분량 상한: max_total건을 넘으면 우선순위가 낮은 분류(기타 → 삼성 → 반도체)부터, 그 안에서는 점수 낮은 기사부터
+    # '참고'로 내린다(삭제 아님). 칼럼·사설(자체 상한이 있음)과 고정(pin) 현안은 자르지 않는다.
     if cfg.max_total and len(selected) > cfg.max_total:
-        pinned = selected[selected["pin"].astype(bool)]
-        rest = selected.drop(pinned.index).sort_values("score", ascending=False, kind="stable")
-        keep_n = max(0, cfg.max_total - len(pinned))
-        extra = rest.iloc[keep_n:].copy()
-        extra["note"] += f"분량 상한 {cfg.max_total}건 초과(점수순); "
+        opinion_secs = {sec.name for sec in cfg.sections if sec.opinion}
+        fixed = selected["pin"].astype(bool) | selected["section"].isin(opinion_secs)
+        order = [sec.name for sec in cfg.sections]
+        rest = selected[~fixed].copy()
+        rest["_secrank"] = rest["section"].map(lambda x: order.index(x) if x in order else len(order))
+        rest = rest.sort_values(["_secrank", "score"], ascending=[False, True], kind="stable")
+        n_cut = min(len(rest), len(selected) - cfg.max_total)
+        extra = rest.iloc[:n_cut].drop(columns="_secrank").copy()
+        extra["note"] += f"분량 상한 {cfg.max_total}건 초과(우선순위 낮은 분류·점수순); "
         reference = pd.concat([reference, extra])
         selected = order_articles(selected.drop(extra.index), cfg)
     flag_same_media_runs(selected)
@@ -486,13 +491,16 @@ def _classify(r, cfg: Config):
         for s in cfg.sections:
             if s.opinion:
                 sub = _opinion_kind(r, s)
-                r["_subrank"] = 0 if (s.topic_first and _hits(text, s.topic_first)) else 1
+                topic = _hits(text, s.topic_first) if s.topic_first else []
+                r["_subrank"] = 0 if topic else 1
+                w = s.weight * (1.5 if topic else 1.0)   # 삼성·반도체·AI 주제 칼럼·사설은 점수도 높게
+                tag = f", 주제 '{topic[0]}'" if topic else ""
                 if s.preferred_media and r["paper"] not in s.preferred_media:
                     h = _hits(text, s.other_media_require)
                     if h:  # 우선 매체 외라도 반도체·삼성 관련 주제면 포함
-                        return s.name, sub, s.weight, [f"{s.name}(우선 매체 외, 주제 '{h[0]}')"], ""
+                        return s.name, sub, w, [f"{s.name}(우선 매체 외, 주제 '{h[0]}')"], ""
                     return s.name, sub, s.weight * s.other_media_factor, [f"{s.name}(우선 매체 외)"], ""
-                return s.name, sub, s.weight, [f"{s.name}"], ""
+                return s.name, sub, w, [f"{s.name}{tag}"], ""
     by_name = {s.name: s for s in cfg.sections}
     for f in cfg.force_sections:
         h = _hits(r["title"], f.get("keywords") or [])

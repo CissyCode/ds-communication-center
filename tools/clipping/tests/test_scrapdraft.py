@@ -338,14 +338,21 @@ class ScrapDraftTest(unittest.TestCase):
         self.assertNotIn("S:1015", list(res.selected["key"]))   # 11/1 자(석간 아님)는 제외
         self.assertIn("발행일이 대상일 아님", set(res.removed["drop_reason"]))
 
-    def test_max_total_keeps_top_scores(self):
+    def test_max_total_cuts_low_priority_first_and_keeps_opinion(self):
         cfg = self.cfg()
         full = build_draft(read_export(self.xlsx), cfg, date(2026, 11, 2))
-        cfg.max_total = 4
+        cfg.max_total = 5
         res = build_draft(read_export(self.xlsx), cfg, date(2026, 11, 2))
-        self.assertEqual(len(res.selected), 4)
-        cut = full.selected[~full.selected["key"].isin(res.selected["key"])]
-        self.assertGreaterEqual(res.selected[~res.selected["pin"].astype(bool)]["score"].min(), cut["score"].max())
+        sel = res.selected
+        # 칼럼/사설은 상한과 무관하게 모두 남는다
+        self.assertEqual(set(full.selected[full.selected["section"] == "칼럼/사설"]["key"]),
+                         set(sel[sel["section"] == "칼럼/사설"]["key"]))
+        # 잘린 기사는 남은 일반 기사보다 우선순위가 낮은 분류(뒤쪽 소제목)에서 나온다
+        order = [s.name for s in cfg.sections]
+        cut = full.selected[~full.selected["key"].isin(sel["key"])]
+        kept = sel[~sel["section"].isin(["칼럼/사설"]) & ~sel["pin"].astype(bool)]
+        if len(cut) and len(kept):
+            self.assertTrue(all(order.index(c) >= order.index(k) for c in cut["section"] for k in kept["section"]))
         self.assertTrue(res.reference["note"].str.contains("분량 상한").any())
 
     def test_analyze(self):
