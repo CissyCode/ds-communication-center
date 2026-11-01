@@ -29,6 +29,7 @@ class Section:
     preferred_media: list[str] = field(default_factory=list)  # 사설·칼럼 우선 매체(그 외는 점수 감점)
     other_media_factor: float = 0.8
     other_media_require: list[str] = field(default_factory=list)  # 우선 매체 외 사설·칼럼도 이 주제면 포함
+    other_media_reference: bool = False   # 우선 매체 외 칼럼·사설은 추천하지 않고 항상 '참고'에
     topic_first: list[str] = field(default_factory=list)  # 이 소제목 안에서 이 주제를 먼저(예: 칼럼·사설의 반도체·AI)
     require_keywords: list[str] = field(default_factory=list)  # 이 소제목은 이 말(제목·부제목·검색어)이 있을 때만 추천
 
@@ -195,6 +196,7 @@ def load_config(path: str | Path, extra: list[str | Path] | None = None) -> Conf
             preferred_media=list(s.get("preferred_media") or []),
             other_media_factor=float(s.get("other_media_factor", 0.8)),
             other_media_require=list(s.get("other_media_require") or []),
+            other_media_reference=bool(s.get("other_media_reference", False)),
             topic_first=list(s.get("topic_first") or []),
             require_keywords=list(s.get("require_keywords") or []),
         ))

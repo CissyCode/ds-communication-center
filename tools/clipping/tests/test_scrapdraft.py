@@ -367,6 +367,16 @@ class ScrapDraftTest(unittest.TestCase):
         self.assertNotIn("S:1004", set(res.removed["key"]))
         self.assertIn("S:9001", set(res.removed["key"]))              # 온라인은 그대로 제외
 
+    def test_other_media_opinion_goes_to_reference(self):
+        cfg = self.cfg()
+        for sec in cfg.sections:
+            if sec.opinion:
+                sec.other_media_reference = True
+        res = build_draft(read_export(self.xlsx), cfg, date(2026, 11, 2))
+        self.assertNotIn("S:1008", set(res.selected["key"]))   # 경향신문 사설(우선 매체 외)
+        self.assertIn("S:1008", set(res.reference["key"]))
+        self.assertIn("S:1009", set(res.selected["key"]))      # 매일경제 사설은 추천
+
     def test_analyze(self):
         past = self.tmp / "past"
         past.mkdir()

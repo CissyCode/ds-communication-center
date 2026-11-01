@@ -219,7 +219,7 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
                 why.append("세로형(3~4단)")
         scores.append(round(score, 1)); sections.append(sec); subs.append(sub); reasons.append("; ".join(why)); pins.append(pin)
         bundles.append(bundle)
-        blocked.append(any("관련 아님" in x for x in why))
+        blocked.append(any("관련 아님" in x or "참고로만" in x for x in why))
     df["score"], df["section"], df["subtopic"], df["reason"], df["pin"] = scores, sections, subs, reasons, pins
     df["bundle"] = bundles
     df["blocked"] = blocked
@@ -308,7 +308,7 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
         selected = pd.concat([selected, pull])
         reference = reference.drop(pull.index)
     dup_ref = reference[reference["cluster"] != ""].sort_values("score", ascending=False)
-    dup_ref = dup_ref[dup_ref.duplicated("cluster", keep="first")]
+    dup_ref = dup_ref[dup_ref.duplicated("cluster", keep="first") & ~dup_ref["reason"].str.contains("참고로만", regex=False)]
     if len(dup_ref):
         dup_ref = dup_ref.copy()
         dup_ref["drop_reason"] = "참고 중복(같은 사안 대표 1건만 참고에)"
@@ -425,7 +425,8 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
         return bool(cfg.protect_all) and all(_hits(_text(r), g) for g in cfg.protect_all)
 
     if cfg.protect_all:
-        back_ref = reference[reference.apply(protected, axis=1) & (reference["is_print"] == True)]  # noqa: E712
+        back_ref = reference[reference.apply(protected, axis=1) & (reference["is_print"] == True)  # noqa: E712
+                             & ~reference["blocked"].astype(bool)]
         back_rm = removed[removed["drop_reason"].str.startswith(("같은 사안", "참고 중복")) & removed.apply(protected, axis=1)] \
             if len(removed) else removed
         back = pd.concat([back_ref, back_rm])
@@ -445,6 +446,17 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             keep["drop_reason"] = ""
             removed = removed.drop(keep.index)
             reference = pd.concat([reference, keep])
+
+    # 칼럼·사설은 (온라인·가판·다른 날짜가 아니면) 제외하지 않고 최소 '참고'에 남긴다
+    opinion_names = {sec.name for sec in cfg.sections if sec.opinion}
+    if opinion_names and len(removed):
+        op = removed[removed["section"].isin(opinion_names) & ~removed["drop_reason"].str.startswith(hard)].copy() \
+            if "section" in removed else removed.iloc[0:0]
+        if len(op):
+            op["note"] = "칼럼·사설이라 참고로 남김(원래 사유: " + op["drop_reason"] + "); " + op["note"]
+            op["drop_reason"] = ""
+            removed = removed.drop(op.index)
+            reference = pd.concat([reference, op])
 
     # 분량 상한: max_total건을 넘으면 우선순위가 낮은 분류(기타 → 삼성 → 반도체)부터, 그 안에서는 점수 낮은 기사부터
     # '참고'로 내린다(삭제 아님). 칼럼·사설(자체 상한이 있음)과 고정(pin) 현안은 자르지 않는다.
@@ -527,6 +539,8 @@ def _classify(r, cfg: Config):
                 r["_subrank"] = 0 if topic else 1
                 w = s.weight * (1.5 if topic else 1.0)   # 삼성·반도체·AI 주제 칼럼·사설은 점수도 높게
                 tag = f", 주제 '{topic[0]}'" if topic else ""
+                if s.preferred_media and r["paper"] not in s.preferred_media and s.other_media_reference:
+                    return s.name, sub, w, [f"{s.name}(우선 매체 외 — 참고로만{tag})"], ""
                 if s.preferred_media and r["paper"] not in s.preferred_media:
                     h = _hits(text, s.other_media_require)
                     if h:  # 우선 매체 외라도 반도체·삼성 관련 주제면 포함
