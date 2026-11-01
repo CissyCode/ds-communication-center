@@ -319,7 +319,9 @@ class ScrapDraftTest(unittest.TestCase):
                        [19, "양산 돌입 수율 다른 신문", "", "한국일보", "9", D, "지면", "산업", "200cm²", "기타", "1019"]]
         blank = [None] * len(HEADER)
         pd.DataFrame([["검색 결과"] + blank[1:], HEADER, *rows, ["합계"] + blank[1:]]).to_excel(p, header=False, index=False)
-        res = build_draft(read_export(p), self.cfg(), date(2026, 11, 2), now=datetime(2026, 11, 2, 9, 0))
+        cfg = self.cfg()
+        cfg.link_same_paper = True   # 기본은 꺼짐(부정확해서). 켰을 때 동작만 확인
+        res = build_draft(read_export(p), cfg, date(2026, 11, 2), now=datetime(2026, 11, 2, 9, 0))
         keys = list(res.selected["key"])
         self.assertIn("S:1018", keys)
         other = res.selected[res.selected["key"] == "S:1019"]
