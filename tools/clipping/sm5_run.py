@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-10-31x"
+VERSION = "2026-11-01a"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -548,11 +548,19 @@ EXPORT_BUTTONS = ("btnScrapList_SaveToExcelFile_T", "btnScrapList_SaveToExcelFil
 def export_group(win, group: str, path: Path) -> pd.DataFrame:
     """검토 그룹 기사만 체크하고 스크랩 목록 [엑셀로 내보내기]로 저장."""
     uncheck_all_scraps(win)
-    item = group_tree_item(win, group)
-    cb = find(item, auto_id="cbScrapTreeGroup", control_type="CheckBox")
-    if not cb.get_toggle_state():
-        cb.click_input()          # 신호(toggle)는 화면만 바뀌고 프로그램 선택은 안 될 수 있어 실제 클릭
-        time.sleep(0.5)
+    for attempt in range(3):
+        _scroll_top(win, group)   # 담기 뒤엔 목록이 아래로 내려가 있어 그룹 머리줄(체크박스)이 화면 밖일 수 있다
+        item = group_tree_item(win, group)
+        cb = find(item, auto_id="cbScrapTreeGroup", control_type="CheckBox")
+        if cb.get_toggle_state():
+            break
+        try:
+            cb.click_input()      # 신호(toggle)는 화면만 바뀌고 프로그램 선택은 안 될 수 있어 실제 클릭
+        except Exception:
+            pass
+        time.sleep(0.6)
+        if cb.get_toggle_state():
+            break
     if not cb.get_toggle_state():
         raise Stop(f"스크랩 목록에서 '{group}' 그룹을 체크하지 못했습니다.")
     last_err = None
@@ -962,15 +970,16 @@ def main() -> int:
         if batches:
             log(f"추천 순서대로 담기: {len(todo)}건을 {len(batches)}번에 나눠 담음")
         for b, (spec, keys, seqs) in enumerate(batches, 1):
+            t0 = time.time()
             open_source_group(win, spec)
+            t1 = time.time()
             select_group(win, group)
             n_b = group_count(win, group) or 0
             scrap_rows(win, seqs)
             n_a = group_count(win, group) or 0
             if n_a - n_b != len(keys):
                 raise Stop(f"'{spec}' 담기: 그룹 건수 증가 {n_a - n_b}건 ≠ 기대 {len(keys)}건. 화면을 확인해 주세요.")
-            if b % 10 == 0:
-                log(f"담기 진행 {b}/{len(batches)}")
+            log(f"담기 {b}/{len(batches)}: '{spec[:20]}' {len(keys)}건 (그룹 열기 {t1 - t0:.0f}초, 담기 {time.time() - t1:.0f}초)")
 
         # 5) 검증
         after = export_group(win, group, run_dir / f"검토그룹_후_{stamp}.xlsx")
