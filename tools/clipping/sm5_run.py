@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-11-01e"
+VERSION = "2026-11-01f"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -619,12 +619,17 @@ def scrap_rows(win, seqs: list[int]) -> None:
     result_button(win, "선택 해제")
     click_rel(r, TITLE_DX, FIRST_ROW_DY)
     current = 1
+    time.sleep(0.3)
     for n in sorted(seqs):
-        if n - current:
-            keyboard.send_keys("{DOWN %d}" % (n - current))
-            time.sleep(0.15)
+        gap = n - current
+        while gap > 0:          # 긴 목록은 한꺼번에 많이 누르면 화면이 못 따라와 엉뚱한 줄을 누르므로 나눠서
+            step = min(gap, 8)
+            keyboard.send_keys("{DOWN %d}" % step)
+            time.sleep(0.12 + 0.02 * step)
+            gap -= step
+        time.sleep(0.25)
         keyboard.send_keys("{SPACE}")
-        time.sleep(0.15)
+        time.sleep(0.25)
         current = n
     result_button(win, "스크랩")
     time.sleep(1.5)
@@ -1008,6 +1013,7 @@ def main() -> int:
             if pd.notna(seq):
                 options.setdefault(k, []).append((src, int(float(seq))))
         batches = plan_batches(list(todo["key"]), options)
+        mismatch = False
         if batches:
             log(f"추천 순서대로 담기: {len(todo)}건을 {len(batches)}번에 나눠 담음")
         for b, (spec, keys, seqs) in enumerate(batches, 1):
@@ -1018,15 +1024,32 @@ def main() -> int:
             n_b = group_count(win, group) or 0
             scrap_rows(win, seqs)
             n_a = group_count(win, group) or 0
+            note = "" if n_a - n_b == len(keys) else f" — 그룹 건수 증가 {n_a - n_b}건(기대 {len(keys)}건), 끝나고 다시 확인"
+            log(f"담기 {b}/{len(batches)}: '{spec[:20]}' {len(keys)}건 (그룹 열기 {t1 - t0:.0f}초, 담기 {time.time() - t1:.0f}초){note}")
             if n_a - n_b != len(keys):
-                raise Stop(f"'{spec}' 담기: 그룹 건수 증가 {n_a - n_b}건 ≠ 기대 {len(keys)}건. 화면을 확인해 주세요.")
-            log(f"담기 {b}/{len(batches)}: '{spec[:20]}' {len(keys)}건 (그룹 열기 {t1 - t0:.0f}초, 담기 {time.time() - t1:.0f}초)")
+                mismatch = True
+        if mismatch:   # 빠진 기사만 한 건씩 다시 담는다(잘못 담긴 기사는 지우지 않고 알림)
+            mid = export_group(win, group, run_dir / f"검토그룹_중간_{stamp}.xlsx")
+            lost = [k for k in todo["key"] if k not in set(mid["key"])]
+            if lost:
+                log(f"빠진 기사 {len(lost)}건을 한 건씩 다시 담음")
+                for spec, keys, seqs in plan_batches(lost, options):
+                    for k, sq in zip(keys, seqs):
+                        open_source_group(win, spec)
+                        select_group(win, group)
+                        scrap_rows(win, [sq])
 
         # 5) 검증
         after = export_group(win, group, run_dir / f"검토그룹_후_{stamp}.xlsx")
         missing = set(res.selected["key"]) - set(after["key"])
         mine = set(ledger_keys(ledger, target))
-        extra = [k for k in after["key"] if k not in mine]
+        extra = [k for k in after["key"] if k not in mine and k in have]          # 실행 전부터 있던 = 사람이 넣은 기사
+        wrong = [k for k in after["key"] if k not in mine and k not in have]      # 이번 실행에서 잘못 담긴 기사
+        if wrong:
+            t = dict(zip(after["key"], after["title"]))
+            log(f"주의: 추천에 없는 기사 {len(wrong)}건이 잘못 담겼습니다(지우지 않음, 정렬 뒤 맨 아래에 남음 — 확인 후 직접 삭제):")
+            for k in wrong:
+                log(f"   - {t.get(k, '')[:40]} [{k}]")
         if missing:
             raise Stop(f"추천했는데 그룹에 없는 기사 {len(missing)}건: {sorted(missing)[:10]}")
         log(f"Serial 검증 통과(그룹 {len(after)}건)")
