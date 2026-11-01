@@ -338,22 +338,26 @@ class ScrapDraftTest(unittest.TestCase):
         self.assertNotIn("S:1015", list(res.selected["key"]))   # 11/1 자(석간 아님)는 제외
         self.assertIn("발행일이 대상일 아님", set(res.removed["drop_reason"]))
 
-    def test_max_total_cuts_low_priority_first_and_keeps_opinion(self):
+    def test_max_total_keeps_opinion_and_notes(self):
         cfg = self.cfg()
         full = build_draft(read_export(self.xlsx), cfg, date(2026, 11, 2))
         cfg.max_total = 5
         res = build_draft(read_export(self.xlsx), cfg, date(2026, 11, 2))
         sel = res.selected
-        # 칼럼/사설은 상한과 무관하게 모두 남는다
         self.assertEqual(set(full.selected[full.selected["section"] == "칼럼/사설"]["key"]),
                          set(sel[sel["section"] == "칼럼/사설"]["key"]))
-        # 잘린 기사는 남은 일반 기사보다 우선순위가 낮은 분류(뒤쪽 소제목)에서 나온다
-        order = [s.name for s in cfg.sections]
-        cut = full.selected[~full.selected["key"].isin(sel["key"])]
-        kept = sel[~sel["section"].isin(["칼럼/사설"]) & ~sel["pin"].astype(bool)]
-        if len(cut) and len(kept):
-            self.assertTrue(all(order.index(c) >= order.index(k) for c in cut["section"] for k in kept["section"]))
-        self.assertTrue(res.reference["note"].str.contains("분량 상한").any())
+        self.assertTrue(res.reference["note"].str.contains("전체 5건 초과").any())
+
+    def test_section_min_and_max(self):
+        cfg = self.cfg()
+        full = build_draft(read_export(self.xlsx), cfg, date(2026, 11, 2))
+        n_core = int((full.selected["section"] == "핵심").sum())
+        cfg.section_max = {"핵심": 1}
+        res = build_draft(read_export(self.xlsx), cfg, date(2026, 11, 2))
+        pinned = int(((res.selected["section"] == "핵심") & res.selected["pin"].astype(bool)).sum())
+        self.assertLessEqual(int((res.selected["section"] == "핵심").sum()), 1 + pinned)
+        self.assertGreater(n_core, 1)
+        self.assertTrue(res.reference["note"].str.contains("'핵심' 최대 1건 초과").any())
 
     def test_protect_and_keep_reference(self):
         cfg = self.cfg()
@@ -361,8 +365,8 @@ class ScrapDraftTest(unittest.TestCase):
         cfg.keep_reference = ["가나"]
         cfg.max_total = 1
         res = build_draft(read_export(self.xlsx), cfg, date(2026, 11, 2))
-        keys = set(res.selected["key"])
-        self.assertTrue({"S:1001", "S:1002"} <= keys)                 # 가나+HBM은 상한이 있어도 남는다
+        kept = set(res.selected["key"]) | set(res.reference["key"])
+        self.assertTrue({"S:1001", "S:1002"} <= kept)                 # 가나+HBM은 제외되지 않는다(최소 참고)
         self.assertIn("S:1004", set(res.reference["key"]))            # '부고 가나…'는 제외 대신 참고
         self.assertNotIn("S:1004", set(res.removed["key"]))
         self.assertIn("S:9001", set(res.removed["key"]))              # 온라인은 그대로 제외

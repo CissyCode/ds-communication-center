@@ -414,8 +414,8 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             selected = pd.concat([selected, extra])
         if (selected["link"] != "").any():
             selected = order_articles(selected, cfg)
-    # 보호 규칙: 삼성+반도체(protect_all)는 점수·상한·같은 사안 제한으로 잘리지 않게 추천으로 되돌리고,
-    # 삼성(keep_reference)이 들어간 기사는 제외되지 않고 최소 '참고'에 남긴다. 온라인·가판·다른 날짜는 그대로 제외.
+    # 보호 규칙: 삼성+반도체(protect_all)는 제외 시트로 빠지지 않고 최소 '참고'에 남으며, 분량을 줄일 때 가장 늦게 줄인다.
+    # 삼성(keep_reference)이 들어간 기사도 최소 '참고'. 온라인·가판·다른 날짜는 그대로 제외.
     hard = ("온라인 기사", "판 중복", "발행일이 대상일 아님")
 
     def _text(r):
@@ -424,19 +424,13 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
     def protected(r) -> bool:
         return bool(cfg.protect_all) and all(_hits(_text(r), g) for g in cfg.protect_all)
 
-    if cfg.protect_all:
-        back_ref = reference[reference.apply(protected, axis=1) & (reference["is_print"] == True)  # noqa: E712
-                             & ~reference["blocked"].astype(bool)]
-        back_rm = removed[removed["drop_reason"].str.startswith(("같은 사안", "참고 중복")) & removed.apply(protected, axis=1)] \
-            if len(removed) else removed
-        back = pd.concat([back_ref, back_rm])
+    if cfg.protect_all and len(removed):
+        back = removed[~removed["drop_reason"].str.startswith(hard) & removed.apply(protected, axis=1)].copy()
         if len(back):
-            back = back.copy()
-            back["note"] += "삼성+반도체 보호(자르지 않음); "
+            back["note"] = "삼성+반도체라 참고로 남김(원래 사유: " + back["drop_reason"] + "); " + back["note"]
             back["drop_reason"] = ""
-            reference = reference.drop([i for i in back.index if i in reference.index])
-            removed = removed.drop([i for i in back.index if i in removed.index])
-            selected = order_articles(pd.concat([selected, back]), cfg)
+            removed = removed.drop(back.index)
+            reference = pd.concat([reference, back])
     if cfg.keep_reference and len(removed):
         soft = ~removed["drop_reason"].str.startswith(hard)
         sam = removed.apply(lambda r: bool(_hits(_text(r), cfg.keep_reference)), axis=1)
@@ -458,20 +452,64 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             removed = removed.drop(op.index)
             reference = pd.concat([reference, op])
 
-    # 분량 상한: max_total건을 넘으면 우선순위가 낮은 분류(기타 → 삼성 → 반도체)부터, 그 안에서는 점수 낮은 기사부터
-    # '참고'로 내린다(삭제 아님). 칼럼·사설(자체 상한이 있음)과 고정(pin) 현안은 자르지 않는다.
+    # 분량 맞추기(소제목별): 기타 등 최소 건수는 참고에서 점수순으로 채우고, 소제목별 최대 건수를 넘으면 줄인다.
+    # 줄이는 순서: 같은 사안의 뒤따르는 기사 → 당사(DS·삼성 소주제) 아닌 기사 → 삼성+반도체 아닌 기사 → 점수 낮은 기사.
+    # 칼럼·사설(자체 상한)과 고정 현안은 줄이지 않는다. 내려간 기사는 '참고'(삭제 아님).
+    opinion_secs = {sec.name for sec in cfg.sections if sec.opinion}
+
+    def own(r) -> bool:
+        return r["section"] in cfg.own_sections or any(str(r["subtopic"]).startswith(p) for p in cfg.own_subtopic_prefixes)
+
+    for sec_name, mn in (cfg.section_min or {}).items():
+        have_n = int((selected["section"] == sec_name).sum())
+        if have_n < mn and len(reference):
+            cand = reference[(reference["section"] == sec_name) & (reference["is_print"] == True)  # noqa: E712
+                             & ~reference["blocked"].astype(bool)].sort_values("score", ascending=False)
+            add = cand.head(mn - have_n).copy()
+            if len(add):
+                add["note"] += f"'{sec_name}' 최소 {mn}건 채움; "
+                reference = reference.drop(add.index)
+                selected = order_articles(pd.concat([selected, add]), cfg)
+
+    def cut_order(frame: pd.DataFrame) -> pd.DataFrame:
+        f = frame.copy()
+        first = f.sort_values("rank").drop_duplicates("cluster", keep="first").index if "rank" in f else f.index
+        f["_follower"] = [(c != "" and i not in first) for i, c in zip(f.index, f["cluster"])]
+        f["_own"] = f.apply(own, axis=1)
+        f["_prot"] = f.apply(protected, axis=1)
+        return f.sort_values(["_follower", "_own", "_prot", "score"], ascending=[False, True, True, True], kind="stable")
+
+    def cut(frame: pd.DataFrame, n: int, why: str):
+        nonlocal_sel = frame.iloc[:n].drop(columns=["_follower", "_own", "_prot"]).copy()
+        nonlocal_sel["note"] += why
+        return nonlocal_sel
+
+    for sec_name, mx in (cfg.section_max or {}).items():
+        members = selected[(selected["section"] == sec_name) & ~selected["pin"].astype(bool)]
+        if len(members) > mx:
+            extra = cut(cut_order(members), len(members) - mx, f"'{sec_name}' 최대 {mx}건 초과; ")
+            reference = pd.concat([reference, extra])
+            selected = order_articles(selected.drop(extra.index), cfg)
+
     if cfg.max_total and len(selected) > cfg.max_total:
-        opinion_secs = {sec.name for sec in cfg.sections if sec.opinion}
-        fixed = selected["pin"].astype(bool) | selected["section"].isin(opinion_secs) | selected.apply(protected, axis=1)
-        order = [sec.name for sec in cfg.sections]
-        rest = selected[~fixed].copy()
-        rest["_secrank"] = rest["section"].map(lambda x: order.index(x) if x in order else len(order))
-        rest = rest.sort_values(["_secrank", "score"], ascending=[False, True], kind="stable")
-        n_cut = min(len(rest), len(selected) - cfg.max_total)
-        extra = rest.iloc[:n_cut].drop(columns="_secrank").copy()
-        extra["note"] += f"분량 상한 {cfg.max_total}건 초과(우선순위 낮은 분류·점수순); "
-        reference = pd.concat([reference, extra])
-        selected = order_articles(selected.drop(extra.index), cfg)
+        mins = cfg.section_min or {}
+        fixed = selected["pin"].astype(bool) | selected["section"].isin(opinion_secs)
+        pool = cut_order(selected[~fixed])
+        drop_idx = []
+        counts = selected["section"].value_counts().to_dict()
+        need_cut = len(selected) - cfg.max_total
+        for i, r in pool.iterrows():
+            if len(drop_idx) >= need_cut:
+                break
+            if counts.get(r["section"], 0) - 1 < mins.get(r["section"], 0):
+                continue   # 최소 건수 아래로는 줄이지 않음
+            drop_idx.append(i)
+            counts[r["section"]] -= 1
+        if drop_idx:
+            extra = selected.loc[drop_idx].copy()
+            extra["note"] += f"전체 {cfg.max_total}건 초과; "
+            reference = pd.concat([reference, extra])
+            selected = order_articles(selected.drop(drop_idx), cfg)
     flag_same_media_runs(selected)
     # 묶음 표시를 실제 추천 건수로 고침(상한으로 줄어든 경우)
     if not selected.empty:
