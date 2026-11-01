@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-11-01h"
+VERSION = "2026-11-01i"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -428,15 +428,20 @@ def refresh_search(win, wait_s: int) -> list[str]:
     return read_keywords(win)
 
 
-def list_source_groups(win) -> list[str]:
-    """'관심 키워드' 폴더의 검색어 그룹 중 지면 결과가 있는 것. 같은 검색어가 여럿이면 '검색어@매체수'."""
+def _norm(x: str) -> str:
+    return re.sub(r"\s+", "", x or "")
+
+
+def list_source_groups(win, folder_name: str = "관심 키워드") -> list[str]:
+    """지정 폴더(기본 '관심 키워드', 날짜 지정 검색은 '수동 검색')의 검색어 그룹 중 지면 결과가 있는 것.
+    같은 검색어가 여럿이면 '검색어@매체수'."""
     tree = need(win, "treeSearchResultGroups")
     expand_search_folders(tree)
     time.sleep(0.5)
     found = []
     for folder in tree.children(control_type="TreeItem"):
         ft = texts(folder)
-        if not ft or ft[0] != "관심 키워드":
+        if not ft or _norm(ft[0]) != _norm(folder_name):
             continue
         for item in folder.children(control_type="TreeItem"):
             if item.element_info.name != "ScrapMaster5.SearchGroup":
@@ -460,6 +465,7 @@ def list_source_groups(win) -> list[str]:
     return specs
 
 
+SOURCE_FOLDER = "관심 키워드"   # 후보를 읽는 검색어 폴더
 SEARCH_ITEMS: dict[str, object] = {}   # 검색어 그룹 → 목록 항목(한 번 찾은 것은 다시 훑지 않음)
 
 
@@ -499,7 +505,13 @@ def open_source_group(win, spec: str) -> int:
     if tree is not None:
         expand_search_folders(tree)
         time.sleep(0.5)
-    for item in ([] if tree is None else tree.descendants(control_type="TreeItem")):
+    cands = []
+    if tree is not None:   # 지정 폴더 안에서만 찾는다(같은 검색어가 다른 폴더에도 있을 수 있음)
+        for folder in tree.children(control_type="TreeItem"):
+            ft = texts(folder)
+            if ft and _norm(ft[0]) == _norm(SOURCE_FOLDER):
+                cands = folder.descendants(control_type="TreeItem")
+    for item in cands:
         if item.element_info.name != "ScrapMaster5.SearchGroup":
             continue
         t = texts(item)
@@ -510,7 +522,7 @@ def open_source_group(win, spec: str) -> int:
         target = item
         break
     if target is None:
-        raise Stop(f"검색어 그룹 '{spec}'을 찾지 못했습니다. [검색] 탭 왼쪽 '관심 키워드' 목록이 펼쳐져 있는지 확인해 주세요.")
+        raise Stop(f"검색어 그룹 '{spec}'을 찾지 못했습니다. [검색] 탭 왼쪽 '{SOURCE_FOLDER}' 목록이 펼쳐져 있는지 확인해 주세요.")
     def switched() -> bool:
         kw = by_id(win, "tbCurrentSearchResultKeywordInfo1")
         return kw is not None and kw.window_text().strip() == keyword
@@ -907,7 +919,9 @@ def reorder(win, group: str, current: list[str], desired: list[str], check_expor
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--date", help="대상 일자(기본 오늘)")
+    ap.add_argument("--date", help="대상 일자(기본 오늘. --folder 수동검색이면 결과에 가장 많은 발행일)")
+    ap.add_argument("--folder", default="관심 키워드",
+                    help="후보를 읽을 검색어 폴더. 자동검색은 '관심 키워드'(기본), 날짜를 지정해 검색한 결과는 '수동 검색'")
     ap.add_argument("--group", help="검토 그룹 이름(기본 자동검토_MMDD)")
     ap.add_argument("--source", action="append",
                     help="후보로 쓸 검색어 그룹(여러 번 지정 가능). 'all'이면 관심 키워드 전체. 같은 이름이 여럿이면 '이름@매체수'. 기본 '삼성 반도체'")
@@ -947,15 +961,18 @@ def main() -> int:
             raise Stop("검색어 목록을 읽지 못했습니다. [검색] 탭 왼쪽 '관심 키워드'를 펼쳐 둔 뒤 다시 실행해 주세요.")
 
         # 2) 후보 내보내기(검색어 그룹별)
+        global SOURCE_FOLDER
+        SOURCE_FOLDER = args.folder
         sources = args.source or ["삼성 반도체"]
         if sources == ["all"]:
-            sources = list_source_groups(win)
-            log(f"검색어 그룹 {len(sources)}개(지면 결과 있는 것)를 후보로 사용")
+            sources = list_source_groups(win, args.folder)
+            log(f"'{args.folder}' 검색어 그룹 {len(sources)}개(지면 결과 있는 것)를 후보로 사용")
         parts, src = [], None
         skipped = []
         cdir, cidx = cache_index(target)
         for i, spec in enumerate(sources, 1):
-            cached = cidx.get(spec)
+            ckey = spec if _norm(args.folder) == _norm("관심 키워드") else f"{args.folder}|{spec}"
+            cached = cidx.get(ckey)
             tree_n = GROUP_COUNTS.get(spec)
             if cached and tree_n and cached.get("count") == tree_n and (cdir / cached["file"]).exists():
                 n = tree_n
@@ -976,9 +993,9 @@ def main() -> int:
                 log(f"후보 그룹 '{spec}' 지면 {n}건 — 엑셀 저장")
                 src = export_search(win, run_dir / f"검색결과{i}_{stamp}.xlsx", args.keep_options)
                 import shutil
-                name = f"g{abs(hash(spec)) % 10**8}.xlsx"
+                name = f"g{abs(hash(ckey)) % 10**8}.xlsx"
                 shutil.copyfile(src, cdir / name)
-                cidx[spec] = {"count": n, "file": name}
+                cidx[ckey] = {"count": n, "file": name}
                 save_cache_index(cdir, cidx)
             part = read_export(src)
             cols = set(part.attrs.get("has_columns", []))
@@ -1003,6 +1020,11 @@ def main() -> int:
         if "date" in df:
             dist = df.drop_duplicates("key")["date"].value_counts().sort_index()
             log("후보 발행일별 건수: " + ", ".join(f"{d}: {n}" for d, n in dist.items()))
+            if not args.date and _norm(args.folder) != _norm("관심 키워드") and len(dist):
+                target = dist.idxmax()
+                if not args.group:
+                    group = f"자동검토_{target:%m%d}"
+                log(f"대상 일자를 결과에 가장 많은 발행일 {target}로 봄(--date로 지정 가능)")
         res = build_draft(df, cfg, target)
         run_id = ledger.start_run(target, str(src), file_sha256(src), cfg.sha256, len(df))
         new = ledger.record_candidates(run_id, target, res.selected)
