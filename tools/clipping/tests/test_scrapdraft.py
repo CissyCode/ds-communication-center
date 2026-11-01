@@ -338,6 +338,16 @@ class ScrapDraftTest(unittest.TestCase):
         self.assertNotIn("S:1015", list(res.selected["key"]))   # 11/1 자(석간 아님)는 제외
         self.assertIn("발행일이 대상일 아님", set(res.removed["drop_reason"]))
 
+    def test_max_total_keeps_top_scores(self):
+        cfg = self.cfg()
+        full = build_draft(read_export(self.xlsx), cfg, date(2026, 11, 2))
+        cfg.max_total = 4
+        res = build_draft(read_export(self.xlsx), cfg, date(2026, 11, 2))
+        self.assertEqual(len(res.selected), 4)
+        cut = full.selected[~full.selected["key"].isin(res.selected["key"])]
+        self.assertGreaterEqual(res.selected[~res.selected["pin"].astype(bool)]["score"].min(), cut["score"].max())
+        self.assertTrue(res.reference["note"].str.contains("분량 상한").any())
+
     def test_analyze(self):
         past = self.tmp / "past"
         past.mkdir()

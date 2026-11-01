@@ -56,3 +56,4 @@ scoring: {min_score: 40, front_page_bonus: 30, early_page_bonus: 10, early_page_
 # 연결기사: 추천 기사와 같은 신문·같은 날짜의 같은 사안 기사는 점수·상한과 상관없이 함께 담고 대표 바로 뒤에 둔다
 link_same_paper: false
 link_max: 4
+max_total: 100   # 추천 최대 건수(점수순)

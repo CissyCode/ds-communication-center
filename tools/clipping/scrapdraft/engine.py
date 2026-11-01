@@ -414,6 +414,15 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             selected = pd.concat([selected, extra])
         if (selected["link"] != "").any():
             selected = order_articles(selected, cfg)
+    # 분량 상한: 점수 높은 순으로 max_total건만 추천, 나머지는 '참고'(삭제 아님). 고정(pin) 현안은 항상 유지
+    if cfg.max_total and len(selected) > cfg.max_total:
+        pinned = selected[selected["pin"].astype(bool)]
+        rest = selected.drop(pinned.index).sort_values("score", ascending=False, kind="stable")
+        keep_n = max(0, cfg.max_total - len(pinned))
+        extra = rest.iloc[keep_n:].copy()
+        extra["note"] += f"분량 상한 {cfg.max_total}건 초과(점수순); "
+        reference = pd.concat([reference, extra])
+        selected = order_articles(selected.drop(extra.index), cfg)
     flag_same_media_runs(selected)
     # 묶음 표시를 실제 추천 건수로 고침(상한으로 줄어든 경우)
     if not selected.empty:
