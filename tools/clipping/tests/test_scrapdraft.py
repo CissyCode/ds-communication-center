@@ -355,6 +355,18 @@ class ScrapDraftTest(unittest.TestCase):
             self.assertTrue(all(order.index(c) >= order.index(k) for c in cut["section"] for k in kept["section"]))
         self.assertTrue(res.reference["note"].str.contains("분량 상한").any())
 
+    def test_protect_and_keep_reference(self):
+        cfg = self.cfg()
+        cfg.protect_all = [["가나"], ["HBM", "반도체"]]
+        cfg.keep_reference = ["가나"]
+        cfg.max_total = 1
+        res = build_draft(read_export(self.xlsx), cfg, date(2026, 11, 2))
+        keys = set(res.selected["key"])
+        self.assertTrue({"S:1001", "S:1002"} <= keys)                 # 가나+HBM은 상한이 있어도 남는다
+        self.assertIn("S:1004", set(res.reference["key"]))            # '부고 가나…'는 제외 대신 참고
+        self.assertNotIn("S:1004", set(res.removed["key"]))
+        self.assertIn("S:9001", set(res.removed["key"]))              # 온라인은 그대로 제외
+
     def test_analyze(self):
         past = self.tmp / "past"
         past.mkdir()

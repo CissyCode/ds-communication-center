@@ -414,11 +414,43 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             selected = pd.concat([selected, extra])
         if (selected["link"] != "").any():
             selected = order_articles(selected, cfg)
+    # 보호 규칙: 삼성+반도체(protect_all)는 점수·상한·같은 사안 제한으로 잘리지 않게 추천으로 되돌리고,
+    # 삼성(keep_reference)이 들어간 기사는 제외되지 않고 최소 '참고'에 남긴다. 온라인·가판·다른 날짜는 그대로 제외.
+    hard = ("온라인 기사", "판 중복", "발행일이 대상일 아님")
+
+    def _text(r):
+        return f"{r['title']} {r['subtitle']}"
+
+    def protected(r) -> bool:
+        return bool(cfg.protect_all) and all(_hits(_text(r), g) for g in cfg.protect_all)
+
+    if cfg.protect_all:
+        back_ref = reference[reference.apply(protected, axis=1) & (reference["is_print"] == True)]  # noqa: E712
+        back_rm = removed[removed["drop_reason"].str.startswith(("같은 사안", "참고 중복")) & removed.apply(protected, axis=1)] \
+            if len(removed) else removed
+        back = pd.concat([back_ref, back_rm])
+        if len(back):
+            back = back.copy()
+            back["note"] += "삼성+반도체 보호(자르지 않음); "
+            back["drop_reason"] = ""
+            reference = reference.drop([i for i in back.index if i in reference.index])
+            removed = removed.drop([i for i in back.index if i in removed.index])
+            selected = order_articles(pd.concat([selected, back]), cfg)
+    if cfg.keep_reference and len(removed):
+        soft = ~removed["drop_reason"].str.startswith(hard)
+        sam = removed.apply(lambda r: bool(_hits(f"{_text(r)} {r['keyword']}", cfg.keep_reference)), axis=1)
+        keep = removed[soft & sam].copy()
+        if len(keep):
+            keep["note"] = "삼성 포함이라 참고로 남김(원래 사유: " + keep["drop_reason"] + "); " + keep["note"]
+            keep["drop_reason"] = ""
+            removed = removed.drop(keep.index)
+            reference = pd.concat([reference, keep])
+
     # 분량 상한: max_total건을 넘으면 우선순위가 낮은 분류(기타 → 삼성 → 반도체)부터, 그 안에서는 점수 낮은 기사부터
     # '참고'로 내린다(삭제 아님). 칼럼·사설(자체 상한이 있음)과 고정(pin) 현안은 자르지 않는다.
     if cfg.max_total and len(selected) > cfg.max_total:
         opinion_secs = {sec.name for sec in cfg.sections if sec.opinion}
-        fixed = selected["pin"].astype(bool) | selected["section"].isin(opinion_secs)
+        fixed = selected["pin"].astype(bool) | selected["section"].isin(opinion_secs) | selected.apply(protected, axis=1)
         order = [sec.name for sec in cfg.sections]
         rest = selected[~fixed].copy()
         rest["_secrank"] = rest["section"].map(lambda x: order.index(x) if x in order else len(order))

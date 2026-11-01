@@ -96,6 +96,8 @@ class Config:
     link_max: int = 4                 # 기사 1건에 붙이는 연결기사 최대 건수
     alert_keywords: list[str] = field(default_factory=list)   # '우선 검토' 표시(배열과 별개)
     volume_range: tuple[int, int] | None = None               # 분량 참고 범위(자르지 않음)
+    protect_all: list = field(default_factory=list)       # [[삼성, 삼전], [반도체, 메모리, ...]]: 각 묶음에서 하나씩 제목·부제목에 있으면 절대 자르지 않음
+    keep_reference: list = field(default_factory=list)    # [삼성, 삼전]: 제목·부제목·검색어에 있으면 제외하지 않고 최소 '참고'에 남김
     max_total: int | None = None      # 추천 최대 건수. 넘으면 점수 낮은 기사부터 '참고'로(고정 현안은 유지)
     evening_papers: list[str] = field(default_factory=list)   # 석간: 대상일 전날 발행분을 정상으로 봄
     shape_bonus: float = 0.0          # 3~4단 폭 세로형 기사 가점
@@ -241,6 +243,8 @@ def load_config(path: str | Path, extra: list[str | Path] | None = None) -> Conf
         alert_keywords=list(c.get("alert_keywords") or []),
         volume_range=tuple(c["volume_range"]) if c.get("volume_range") else None,
         max_total=int(c["max_total"]) if c.get("max_total") else None,
+        protect_all=[list(g) for g in (c.get("protect_all") or [])],
+        keep_reference=list(c.get("keep_reference") or []),
         evening_papers=list(c.get("evening_papers") or []),
         shape_bonus=float((c.get("shape") or {}).get("bonus", 0)),
         shape_min_width=float((c.get("shape") or {}).get("min_width_cm", 9)),

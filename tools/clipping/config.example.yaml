@@ -57,3 +57,9 @@ scoring: {min_score: 40, front_page_bonus: 30, early_page_bonus: 10, early_page_
 link_same_paper: false
 link_max: 4
 max_total: 100   # 추천 최대 건수(점수순)
+
+# 보호 규칙(예시: 가상 회사명)
+protect_all:
+  - [가나전자]
+  - [반도체, 메모리]
+keep_reference: [가나전자]
