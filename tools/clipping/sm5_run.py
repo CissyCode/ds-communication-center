@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-11-01b"
+VERSION = "2026-11-01c"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -444,14 +444,18 @@ def list_source_groups(win) -> list[str]:
             media = next((m.group(1) for x in t for m in [re.search(r"매체:(\d+)/", x)] if m), "")
             n = int(cnt.split("/")[0])
             if n > 0:
-                found.append((kw, media, n))
-    names = [k for k, _, _ in found]
+                found.append((kw, media, n, item))
+    names = [k for k, _, _, _ in found]
     specs = []
-    for k, m, n in found:
+    for k, m, n, item in found:
         spec = f"{k}@{m}" if names.count(k) > 1 and m else k
         GROUP_COUNTS[spec] = n
+        SEARCH_ITEMS[spec] = item
         specs.append(spec)
     return specs
+
+
+SEARCH_ITEMS: dict[str, object] = {}   # 검색어 그룹 → 목록 항목(한 번 찾은 것은 다시 훑지 않음)
 
 
 GROUP_COUNTS: dict[str, int] = {}   # 검색어 그룹별 지면 건수(목록에서 읽은 값)
@@ -474,11 +478,17 @@ def save_cache_index(d: Path, index: dict) -> None:
 def open_source_group(win, spec: str) -> int:
     """spec: '검색어' 또는 '검색어@매체수'(같은 검색어가 여러 개일 때, 예: '삼성 반도체@3' = 석간 3개 매체용)."""
     keyword, _, media_n = spec.partition("@")
-    tree = need(win, "treeSearchResultGroups")
-    expand_search_folders(tree)
-    time.sleep(0.5)
-    target = None
-    for item in tree.descendants(control_type="TreeItem"):
+    target = SEARCH_ITEMS.get(spec)
+    if target is not None:
+        try:
+            target.element_info.element.CurrentName   # 아직 유효한지
+        except Exception:
+            target = None
+    tree = None if target is not None else need(win, "treeSearchResultGroups")
+    if tree is not None:
+        expand_search_folders(tree)
+        time.sleep(0.5)
+    for item in ([] if tree is None else tree.descendants(control_type="TreeItem")):
         if item.element_info.name != "ScrapMaster5.SearchGroup":
             continue
         t = texts(item)

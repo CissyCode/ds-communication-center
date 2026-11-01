@@ -35,20 +35,79 @@ def main_window():
     return Desktop(backend="uia").window(handle=main.handle)
 
 
-def by_id(win, auto_id: str):
-    c = win.child_window(auto_id=auto_id)
-    if not c.exists(timeout=2):
-        return None
-    return c.wrapper_object()
+def _uia():
+    from pywinauto.uia_defines import IUIA
+    return IUIA()
+
+
+def _root_element(win):
+    """창(WindowSpecification 또는 wrapper)의 UIA 원소."""
+    if hasattr(win, "wrapper_object"):
+        try:
+            return win.wrapper_object().element_info.element   # WindowSpecification
+        except Exception:
+            pass
+    return win.element_info.element
+
+
+def _wrap(el):
+    from pywinauto.controls.uiawrapper import UIAWrapper
+    from pywinauto.uia_element_info import UIAElementInfo
+    return UIAWrapper(UIAElementInfo(el))
+
+
+def _find_all(root_el, prop_id: int, value):
+    u = _uia()
+    cond = u.iuia.CreatePropertyCondition(prop_id, value)
+    arr = root_el.FindAll(u.tree_scope["descendants"], cond)
+    return [arr.GetElement(i) for i in range(arr.Length)]
+
+
+def by_id(win, auto_id: str, wait: float = 1.0):
+    """auto_id로 요소 찾기(Windows 자동화 기능이 직접 검색 — 화면 전체를 파이썬으로 훑는 것보다 훨씬 빠름).
+    여러 개면 화면에 보이는 것 중 마지막 것. 없으면 wait초까지 다시 보고 None."""
+    import time as _t
+    end = _t.time() + wait
+    while True:
+        try:
+            els = _find_all(_root_element(win), _uia().UIA_dll.UIA_AutomationIdPropertyId, auto_id)
+        except Exception:
+            els = []
+        if els:
+            if len(els) == 1:
+                return _wrap(els[0])
+            vis = []
+            for e in els:
+                try:
+                    r = e.CurrentBoundingRectangle
+                    if (r.right - r.left) > 0 and not e.CurrentIsOffscreen:
+                        vis.append(e)
+                except Exception:
+                    pass
+            return _wrap((vis or els)[-1])
+        if _t.time() >= end:
+            return None
+        _t.sleep(0.25)
 
 
 def texts(elem) -> list[str]:
-    out = []
-    for t in elem.descendants(control_type="Text"):
-        s = (t.window_text() or "").strip()
-        if s:
-            out.append(s)
-    return out
+    """요소 안 글자(Text) 목록 — 화면 순서대로."""
+    try:
+        els = _find_all(elem.element_info.element, _uia().UIA_dll.UIA_ControlTypePropertyId,
+                        _uia().UIA_dll.UIA_TextControlTypeId)
+        out = []
+        for e in els:
+            s = (e.CurrentName or "").strip()
+            if s:
+                out.append(s)
+        return out
+    except Exception:
+        out = []
+        for t in elem.descendants(control_type="Text"):
+            s = (t.window_text() or "").strip()
+            if s:
+                out.append(s)
+        return out
 
 
 def expand_search_folders(tree) -> None:
