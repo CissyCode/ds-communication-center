@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-11-01y"
+VERSION = "2026-11-02a"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -364,18 +364,55 @@ def save_dialog(win, path: Path, columns: list[str], timeout=10) -> Path:
     log("저장 항목: " + ", ".join(n for n, cb in boxes.items() if cb.get_toggle_state() == 1))
     edit = find(dlg, auto_id="1148", control_type="Edit")
     edit.set_edit_text(str(path))
-    time.sleep(0.2)
+    time.sleep(0.3)
+    try:
+        typed = edit.window_text()
+    except Exception:
+        typed = ""
+    if typed.strip() != str(path):   # 신호로 안 들어가면 직접 입력
+        edit.click_input()
+        keyboard.send_keys("^a{BACKSPACE}")
+        keyboard.send_keys(str(path), with_spaces=True)
+        time.sleep(0.3)
+        try:
+            typed = edit.window_text()
+        except Exception:
+            typed = "?"
+        log(f"파일 이름 직접 입력: {typed}")
+    started = time.time()
     press(find(dlg, auto_id="1", control_type="Button"))
 
-    end = time.time() + 30
+    end = time.time() + 90           # 보안 프로그램(문서 암호화 등)이 있으면 저장이 늦을 수 있음
     while time.time() < end:
         dismiss_notices(win)
         if path.exists() and path.stat().st_size > 0:
             time.sleep(1.0)
             dismiss_notices(win)
             return path
+        # 이름이 조금 바뀌어 저장됐는지(확장자 중복 등)
+        for f in path.parent.glob(path.stem + "*"):
+            if f.is_file() and f.stat().st_mtime >= started - 2 and f.stat().st_size > 0:
+                log(f"저장된 파일 이름이 다릅니다: {f.name}")
+                time.sleep(1.0)
+                dismiss_notices(win)
+                return f
         time.sleep(0.5)
-    raise Stop(f"엑셀 파일이 만들어지지 않았습니다: {path}")
+    # 다른 곳에 저장됐는지 찾아서 알려 준다
+    found = []
+    home = Path.home()
+    for d in [path.parent, home / "Documents", home / "Desktop", home / "Downloads", Path(path.anchor)]:
+        try:
+            for f in d.glob("*.xls*"):
+                if f.stat().st_mtime >= started - 2:
+                    found.append(str(f))
+        except Exception:
+            continue
+    pops = real_popups(win)
+    if pops:
+        log("저장 뒤 떠 있는 창: " + " / ".join(x.strip() for x in pops[:10]))
+    if found:
+        log("방금 만들어진 엑셀 파일: " + ", ".join(found[:5]))
+    raise Stop(f"엑셀 파일이 만들어지지 않았습니다: {path} (입력된 이름: {typed})")
 
 
 # 저장 뒤 뜨는 알림 창에서 누를 버튼 우선순위('파일을 여시겠습니까?'에는 열지 않음)
