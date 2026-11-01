@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-11-01i"
+VERSION = "2026-11-01j"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -488,6 +488,7 @@ def save_cache_index(d: Path, index: dict) -> None:
 
 def open_source_group(win, spec: str) -> int:
     """spec: '검색어' 또는 '검색어@매체수'(같은 검색어가 여러 개일 때, 예: '삼성 반도체@3' = 석간 3개 매체용)."""
+    global CURRENT_SPEC
     keyword, _, media_n = spec.partition("@")
     if CURRENT_SPEC == spec:   # 이미 열려 있는 그룹이면 다시 열지 않는다
         kw = by_id(win, "tbCurrentSearchResultKeywordInfo1", wait=0)
@@ -527,7 +528,6 @@ def open_source_group(win, spec: str) -> int:
         kw = by_id(win, "tbCurrentSearchResultKeywordInfo1")
         return kw is not None and kw.window_text().strip() == keyword
 
-    global CURRENT_SPEC
     if CURRENT_SPEC != spec and CURRENT_SPEC is not None and CURRENT_SPEC.partition("@")[0] == keyword:
         # 같은 검색어(매체 수만 다름)끼리는 제목으로 바뀐 걸 알 수 없으므로 선택 후 잠시 기다린다
         try:
