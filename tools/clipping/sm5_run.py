@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-11-01f"
+VERSION = "2026-11-01g"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -617,7 +617,9 @@ def scrap_rows(win, seqs: list[int]) -> None:
     close_group_manager(win)   # 남아 있는 그룹 관리 창이 있으면 먼저 닫는다
     r = need(win, "tcSearchResultTab").rectangle()
     result_button(win, "선택 해제")
-    click_rel(r, TITLE_DX, FIRST_ROW_DY)
+    click_rel(r, TITLE_DX, FIRST_ROW_DY)    # 목록에 키보드 포커스
+    keyboard.send_keys("^{HOME}")           # 앞 묶음에서 목록이 내려가 있을 수 있으니 첫 줄로
+    time.sleep(0.4)
     current = 1
     time.sleep(0.3)
     for n in sorted(seqs):
@@ -981,6 +983,9 @@ def main() -> int:
         df = pd.concat(parts, ignore_index=True)  # 같은 기사는 엔진이 Serial로 1건으로 합침(먼저 나온 그룹 기준)
 
         # 3) 엔진
+        if "date" in df:
+            dist = df.drop_duplicates("key")["date"].value_counts().sort_index()
+            log("후보 발행일별 건수: " + ", ".join(f"{d}: {n}" for d, n in dist.items()))
         res = build_draft(df, cfg, target)
         run_id = ledger.start_run(target, str(src), file_sha256(src), cfg.sha256, len(df))
         new = ledger.record_candidates(run_id, target, res.selected)
@@ -997,6 +1002,10 @@ def main() -> int:
             ledger.finish_run(run_id, res.overall, len(res.selected), res.paper_status)
             log("내보내기 단계까지 완료(스크랩 안 함).")
             return 0
+        if cfg.volume_range and len(res.selected) > 2 * cfg.volume_range[1]:
+            ledger.finish_run(run_id, "추천 과다", len(res.selected), res.paper_status)
+            raise Stop(f"추천 {len(res.selected)}건으로 평소({cfg.volume_range[0]}~{cfg.volume_range[1]}건)보다 너무 많아 담지 않습니다. "
+                       "검색어 그룹의 기간·매체 설정을 확인하거나 초안 엑셀을 봐 주세요.")
 
         # 4) 검토 그룹 준비, 이미 담긴 기사 확인
         ensure_group(win, group)

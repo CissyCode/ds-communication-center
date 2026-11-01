@@ -115,8 +115,11 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
         evening = df["paper"].isin(cfg.evening_papers)
         ok_day = (~evening & (df["date"] == target_date)) | (evening & (df["date"] == prev))
         other_day = df["date"].notna() & ~ok_day
-        df.loc[other_day & evening, "note"] += "석간인데 전날 자가 아님; "
-        df.loc[other_day & ~evening, "note"] += "발행일이 대상일과 다름; "
+        if cfg.drop_other_dates:   # 검색 기간이 넓게 잡혀 있어도 대상일 신문만(석간은 전날 자)
+            df.loc[other_day, "drop_reason"] = "발행일이 대상일 아님"
+        else:
+            df.loc[other_day & evening, "note"] += "석간인데 전날 자가 아님; "
+            df.loc[other_day & ~evening, "note"] += "발행일이 대상일과 다름; "
     else:
         df["paper"] = []
 

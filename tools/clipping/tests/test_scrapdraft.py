@@ -331,6 +331,13 @@ class ScrapDraftTest(unittest.TestCase):
         self.assertEqual(row["toc"], "숨김(연결기사)")
         self.assertEqual(row["link"], "S:1001")
 
+    def test_drop_other_dates(self):
+        cfg = self.cfg()
+        cfg.drop_other_dates = True
+        res = build_draft(read_export(self.xlsx), cfg, date(2026, 11, 2))
+        self.assertNotIn("S:1015", list(res.selected["key"]))   # 11/1 자(석간 아님)는 제외
+        self.assertIn("발행일이 대상일 아님", set(res.removed["drop_reason"]))
+
     def test_analyze(self):
         past = self.tmp / "past"
         past.mkdir()

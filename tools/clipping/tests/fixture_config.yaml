@@ -51,3 +51,4 @@ exclude_categories: [광고, 스포츠]
 scoring: {min_score: 40, front_page_bonus: 30, early_page_bonus: 10, early_page_until: 5, size_bonus_per_100cm2: 2}
 evening_papers: [문화일보]
 shape: {bonus: 8, min_width_cm: 9, max_width_cm: 20, min_ratio: 1.2}
+drop_other_dates: false   # 시험 데이터에 다른 날짜 기사가 섞여 있어 메모만
