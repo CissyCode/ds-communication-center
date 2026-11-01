@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-11-01x"
+VERSION = "2026-11-01y"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -1128,6 +1128,8 @@ def main() -> int:
     ap.add_argument("--folder", default="관심 키워드",
                     help="후보를 읽을 검색어 폴더. 자동검색은 '관심 키워드'(기본), 날짜를 지정해 검색한 결과는 '수동 검색'")
     ap.add_argument("--group", help="검토 그룹 이름(기본 자동검토_MMDD)")
+    ap.add_argument("--test", action="store_true", help="시험용: 검토 그룹 이름을 '자동검토_시험'으로(bat 파일용, 한글 없이)")
+    ap.add_argument("--manual", action="store_true", help="'수동 검색' 폴더에서 후보 읽기(= --folder \"수동 검색\")")
     ap.add_argument("--source", action="append",
                     help="후보로 쓸 검색어 그룹(여러 번 지정 가능). 'all'이면 관심 키워드 전체. 같은 이름이 여럿이면 '이름@매체수'. 기본 '삼성 반도체'")
     ap.add_argument("--until", choices=["export", "scrap", "order"], default="order")
@@ -1146,6 +1148,10 @@ def main() -> int:
                     help="엑셀 저장 항목을 전혀 바꾸지 않음(카테고리·크기·부제목 없이 선정 — 광고·스포츠 제외 약해짐)")
     args = ap.parse_args()
 
+    if args.test and not args.group:
+        args.group = "자동검토_시험"
+    if args.manual:
+        args.folder = "수동 검색"
     target = date.fromisoformat(args.date) if args.date else date.today()
     group = args.group or f"자동검토_{target:%m%d}"
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")

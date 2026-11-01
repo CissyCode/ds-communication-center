@@ -1,9 +1,10 @@
 @echo off
 chcp 65001 >nul
-rem 사용법: 검색결과 엑셀 파일을 이 파일 위에 끌어다 놓으세요.
+rem Drag a search-result Excel file onto this bat file.
 cd /d "%~dp0"
+set PYTHONIOENCODING=utf-8
 if "%~1"=="" (
-  echo 검색결과 엑셀 파일을 이 bat 파일 위로 끌어다 놓으세요.
+  echo Drag a search-result Excel file onto this bat file.
   pause
   exit /b 1
 )
