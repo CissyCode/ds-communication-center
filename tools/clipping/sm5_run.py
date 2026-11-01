@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-11-01q"
+VERSION = "2026-11-01r"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -930,6 +930,77 @@ def _top_checked(win, group: str) -> bool | None:
     return bool(cbs[0].get_toggle_state()) if cbs else None
 
 
+def _visible_rows(win, group: str) -> list:
+    """화면 목록 안에 보이는 기사 줄: [(위쪽 y, 아래쪽 y, 고유번호, 원소)] 위에서부터. (네이티브 검색이라 빠름)"""
+    from sm5_read import _find_all, _uia
+    head = group_tree_item(win, group)
+    tr = need(win, "treeScrapArticleList").rectangle()
+    out = []
+    for e in _find_all(head.element_info.element, _uia().UIA_dll.UIA_NamePropertyId, "ScrapMaster5.Article"):
+        try:
+            r = e.CurrentBoundingRectangle
+            rid = tuple(e.GetRuntimeId())
+        except Exception:
+            continue
+        if r.bottom - r.top > 0 and r.top >= tr.top and r.bottom <= tr.bottom:
+            out.append((r.top, r.bottom, rid, e))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def _locate_article(win, group: str, idx: int):
+    """idx번째(0부터) 기사 줄을 화면에 띄우고 그 항목을 돌려준다.
+    맨 위(첫 줄 = 0번)에서 출발해 마우스 휠로 조금씩 내리며, 직전 화면에도 있던 줄의 고유번호를 기준으로
+    지금 보이는 줄들이 몇 번째인지 센다(한 번에 화면 절반 이상은 내리지 않아 기준 줄이 항상 겹친다)."""
+    from collections import Counter
+    from sm5_read import _wrap
+    _scroll_top(win, group)
+    if not _header_visible(win, group):
+        raise Stop("스크랩 목록이 맨 위로 스크롤되지 않았습니다.")
+    rows = _visible_rows(win, group)
+    if len(rows) < 2:
+        raise Stop("스크랩 목록에 보이는 기사가 너무 적습니다(목록 창을 키워 주세요).")
+    h = min(b[0] - a[0] for a, b in zip(rows, rows[1:]) if b[0] - a[0] > 0)
+    view = len(rows)
+    index = {rid: i for i, (_, _, rid, _) in enumerate(rows)}
+    first_idx = 0
+    tr = need(win, "treeScrapArticleList").rectangle()
+    centre = ((tr.left + tr.right) // 2, (tr.top + tr.bottom) // 2)
+    per_notch = None
+    for _ in range(60):
+        for top, _, rid, el in rows:
+            if index.get(rid) == idx:
+                return _wrap(el)
+        last_idx = first_idx + len(rows) - 1
+        if idx < first_idx:
+            raise Stop("목표 기사를 지나쳤습니다.")
+        left = idx - last_idx
+        max_rows = max(1, view // 2 - 1)
+        notches = 1 if per_notch is None else max(1, min(left, max_rows) // max(1, per_notch))
+        mouse.scroll(coords=centre, wheel_dist=-notches)
+        time.sleep(0.35)
+        new = _visible_rows(win, group)
+        if not new:
+            raise Stop("스크롤 뒤 보이는 기사가 없습니다.")
+        t0 = new[0][0]
+        bases = Counter()
+        for top, _, rid, _ in new:
+            if rid in index:
+                bases[index[rid] - round((top - t0) / h)] += 1
+        if not bases:
+            raise Stop("스크롤 전후 겹치는 줄이 없어 위치를 셀 수 없습니다.")
+        base = bases.most_common(1)[0][0]
+        moved = base - first_idx
+        if moved <= 0:
+            raise Stop("휠을 돌려도 목록이 내려가지 않습니다.")
+        if per_notch is None:
+            per_notch = max(1, moved // notches)
+        first_idx = base
+        rows = new
+        index = {rid: base + round((top - t0) / h) for top, _, rid, _ in new}
+    raise Stop(f"{idx + 1}번째 기사까지 내려가지 못했습니다.")
+
+
 def plan_moves(current: list[str], desired: list[str]) -> list[str]:
     """[맨 위로]로 옮겨야 하는 기사(옮길 순서대로). desired의 뒷부분 중 current에 이미 같은 순서로
     놓인 가장 긴 꼬리는 그대로 두고, 나머지만 뒤에서부터 맨 위로 올린다."""
@@ -961,7 +1032,7 @@ def reorder(win, group: str, current: list[str], desired: list[str], check_expor
         idx = order.index(key)
         if idx == 0:
             continue
-        art = _focus_article(win, group, idx)
+        art = _locate_article(win, group, idx)
         cbs = art.descendants(control_type="CheckBox")
         if not cbs:
             _dump_tree(win, group, f"no checkbox idx={idx}")
