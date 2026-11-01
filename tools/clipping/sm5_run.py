@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-11-01g"
+VERSION = "2026-11-01h"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -86,10 +86,10 @@ def _process_windows(win) -> list:
     return out
 
 
-def by_id(win, auto_id: str):
+def by_id(win, auto_id: str, wait: float = 1.0):
     """auto_id로 요소 찾기. 같은 이름이 여럿이면 화면에 보이는 것을 고른다(다른 창에 있는 것 포함)."""
     try:
-        return _by_id(win, auto_id)
+        return _by_id(win, auto_id, wait=wait)
     except ElementAmbiguousError:
         pass
     cands = []
@@ -203,6 +203,11 @@ def group_count(win, group: str) -> int | None:
 def select_group(win, group: str) -> None:
     for ti, label in scrap_tabs(win):
         if split_name(label)[0] == group:
+            try:
+                if ti.is_selected():
+                    return
+            except Exception:
+                pass
             ti.select()
             time.sleep(0.5)
             if not ti.is_selected():
@@ -478,6 +483,12 @@ def save_cache_index(d: Path, index: dict) -> None:
 def open_source_group(win, spec: str) -> int:
     """spec: '검색어' 또는 '검색어@매체수'(같은 검색어가 여러 개일 때, 예: '삼성 반도체@3' = 석간 3개 매체용)."""
     keyword, _, media_n = spec.partition("@")
+    if CURRENT_SPEC == spec:   # 이미 열려 있는 그룹이면 다시 열지 않는다
+        kw = by_id(win, "tbCurrentSearchResultKeywordInfo1", wait=0)
+        if kw is not None and kw.window_text().strip() == keyword:
+            cnt = by_id(win, "tbCurrentSearchResultCount", wait=0)
+            if cnt is not None:
+                return int(cnt.window_text().split("/")[0].strip() or 0)
     target = SEARCH_ITEMS.get(spec)
     if target is not None:
         try:
@@ -537,6 +548,11 @@ def open_source_group(win, spec: str) -> int:
     tab = need(win, "tcSearchResultTab")
     for ti in tab.children(control_type="TabItem"):
         if "지면기사" in texts(ti):
+            try:
+                if ti.is_selected():
+                    break
+            except Exception:
+                pass
             ti.select()
             time.sleep(1.0)
     cnt = by_id(win, "tbCurrentSearchResultCount").window_text()
@@ -613,8 +629,9 @@ def _export_group_once(win, group: str, path: Path) -> pd.DataFrame:
     return read_export(path)
 
 
-def scrap_rows(win, seqs: list[int]) -> None:
-    close_group_manager(win)   # 남아 있는 그룹 관리 창이 있으면 먼저 닫는다
+def scrap_rows(win, seqs: list[int], check_manager: bool = True) -> None:
+    if check_manager:
+        close_group_manager(win)   # 남아 있는 그룹 관리 창이 있으면 먼저 닫는다
     r = need(win, "tcSearchResultTab").rectangle()
     result_button(win, "선택 해제")
     click_rel(r, TITLE_DX, FIRST_ROW_DY)    # 목록에 키보드 포커스
@@ -1031,7 +1048,7 @@ def main() -> int:
             t1 = time.time()
             select_group(win, group)
             n_b = group_count(win, group) or 0
-            scrap_rows(win, seqs)
+            scrap_rows(win, seqs, check_manager=(b == 1))
             n_a = group_count(win, group) or 0
             note = "" if n_a - n_b == len(keys) else f" — 그룹 건수 증가 {n_a - n_b}건(기대 {len(keys)}건), 끝나고 다시 확인"
             log(f"담기 {b}/{len(batches)}: '{spec[:20]}' {len(keys)}건 (그룹 열기 {t1 - t0:.0f}초, 담기 {time.time() - t1:.0f}초){note}")
