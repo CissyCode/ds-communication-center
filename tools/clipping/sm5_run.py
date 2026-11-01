@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-11-01t"
+VERSION = "2026-11-01u"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -1001,6 +1001,71 @@ def _locate_article(win, group: str, idx: int):
     raise Stop(f"{idx + 1}번째 기사까지 내려가지 못했습니다.")
 
 
+def split_groups(selected: pd.DataFrame, base: str, max_n: int) -> list[tuple[str, list[str]]]:
+    """추천 기사를 소제목(반도체·삼성·기타·칼럼/사설)별 검토 그룹으로 나눈다. 한 그룹이 max_n건을 넘으면 -2, -3…으로 쪼갠다.
+    반환: [(그룹 이름, [기사 키(추천 순서)]), ...]"""
+    secs: list[str] = []
+    for sec in selected["section"]:
+        if sec not in secs:
+            secs.append(sec)
+    out = []
+    for i, sec in enumerate(secs, 1):
+        keys = list(selected[selected["section"] == sec]["key"])
+        label = re.sub(r"[\\/:*?\"<>|\s]+", "", str(sec))
+        chunks = [keys[j:j + max_n] for j in range(0, len(keys), max_n)]
+        for c, ks in enumerate(chunks, 1):
+            out.append((f"{base}_{i}{label}" + (f"-{c}" if len(chunks) > 1 else ""), ks))
+    return out
+
+
+def reorder_visible(win, group: str, current: list[str], desired: list[str], check_export=None) -> None:
+    """그룹 기사 전부가 화면에 보일 때의 정렬: 맨 위로 스크롤하면 보이는 줄 순서 = 목록 순서.
+    어긋난 기사만 뒤에서부터 체크 → [맨 위로]."""
+    from sm5_read import _wrap
+    select_group(win, group)
+    _expanded_group(win, group)
+    order = list(current)
+    total = len(order)
+    moves = plan_moves(order, desired)
+    if not moves:
+        log(f"'{group}': 이미 추천 순서")
+        return
+    uncheck_all_scraps(win)
+    t_start = time.time()
+    for n, key in enumerate(moves, 1):
+        idx = order.index(key)
+        if idx == 0:
+            continue
+        _scroll_top(win, group)
+        if not _header_visible(win, group):
+            raise Stop("스크랩 목록이 맨 위로 스크롤되지 않았습니다.")
+        rows = _visible_rows(win, group)
+        if len(rows) != total:
+            raise Stop(f"'{group}' 기사 {total}건 중 화면에 {len(rows)}건만 보입니다. "
+                       "스크랩 목록 창을 세로로 더 키우거나 --group-max를 줄여 주세요.")
+        art = _wrap(rows[idx][3])
+        cbs = art.descendants(control_type="CheckBox")
+        if not cbs:
+            raise Stop(f"'{group}' {idx + 1}번째 기사의 체크박스를 찾지 못했습니다.")
+        cb = cbs[0]
+        if not cb.get_toggle_state():
+            cb.click_input()
+            time.sleep(0.3)
+        if not cb.get_toggle_state():
+            raise Stop("정렬할 기사를 체크하지 못했습니다.")
+        if not click_visible(win, ("btnScrapListSelectedTop",)):
+            raise Stop("[맨 위로] 버튼이 보이지 않습니다.")
+        time.sleep(0.5)
+        order.insert(0, order.pop(idx))
+        uncheck_all_scraps(win)
+        if n == 1 and check_export is not None:
+            got = check_export()
+            if not got or got[0] != key:
+                raise Stop("첫 이동 결과가 계획과 다릅니다(엉뚱한 기사가 올라감).")
+            log(f"'{group}': 첫 이동 확인 통과")
+    log(f"'{group}': {len(moves)}건 이동 (건당 {(time.time() - t_start) / max(1, len(moves)):.1f}초)")
+
+
 def plan_moves(current: list[str], desired: list[str]) -> list[str]:
     """[맨 위로]로 옮겨야 하는 기사(옮길 순서대로). desired의 뒷부분 중 current에 이미 같은 순서로
     놓인 가장 긴 꼬리는 그대로 두고, 나머지만 뒤에서부터 맨 위로 올린다."""
@@ -1066,7 +1131,10 @@ def main() -> int:
     ap.add_argument("--source", action="append",
                     help="후보로 쓸 검색어 그룹(여러 번 지정 가능). 'all'이면 관심 키워드 전체. 같은 이름이 여럿이면 '이름@매체수'. 기본 '삼성 반도체'")
     ap.add_argument("--until", choices=["export", "scrap", "order"], default="order")
-    ap.add_argument("--order", action="store_true", help="담은 뒤 스크랩 목록 정렬을 시도(시험용, 기본은 안 함)")
+    ap.add_argument("--order", action="store_true", help="(--single일 때) 담은 뒤 스크랩 목록 정렬을 시도")
+    ap.add_argument("--single", action="store_true", help="소제목별로 나누지 않고 검토 그룹 하나에 모두 담기(정렬 안 됨)")
+    ap.add_argument("--group-max", type=int, default=40, help="소제목별 검토 그룹 한 개의 최대 건수(화면에 다 보이는 수 이하)")
+    ap.add_argument("--no-order", action="store_true", help="소제목별 그룹에 담기만 하고 정렬하지 않음")
     ap.add_argument("--scrap-order", action="store_true",
                     help="추천 순서대로 여러 번 나눠 담기(검색 목록이 짧을 때만 유리). 기본은 그룹별 한 번에 담고 정렬")
     ap.add_argument("--config", default=str(HERE / "config.yaml"))
@@ -1189,6 +1257,14 @@ def main() -> int:
             raise Stop(f"추천 {len(res.selected)}건으로 평소({cfg.volume_range[0]}~{cfg.volume_range[1]}건)보다 너무 많아 담지 않습니다. "
                        "검색어 그룹의 기간·매체 설정을 확인하거나 초안 엑셀을 봐 주세요.")
 
+        options: dict[str, list[tuple[str, int]]] = {}
+        for k, src, seq in df[["key", "source", "seq"]].itertuples(index=False):
+            if pd.notna(seq):
+                options.setdefault(k, []).append((src, int(float(seq))))
+
+        if not args.single:
+            return run_split_groups(win, args, res, options, group, run_dir, stamp, report, ledger, run_id)
+
         # 4) 검토 그룹 준비, 이미 담긴 기사 확인
         ensure_group(win, group)
         select_group(win, group)
@@ -1198,11 +1274,7 @@ def main() -> int:
         todo = res.selected[~res.selected["key"].isin(have)]
         log(f"검토 그룹 기존 {n_before}건, 새로 담을 {len(todo)}건")
 
-        # 추천 순서대로 담는다(같은 검색어 그룹에서 이어지는 기사는 한 번에). 그러면 정렬 이동이 거의 없다.
-        options: dict[str, list[tuple[str, int]]] = {}
-        for k, src, seq in df[["key", "source", "seq"]].itertuples(index=False):
-            if pd.notna(seq):
-                options.setdefault(k, []).append((src, int(float(seq))))
+        # 추천 순서대로 담거나(--scrap-order) 검색어 그룹별로 한 번에 담는다.
         if args.scrap_order:
             batches = plan_batches(list(todo["key"]), options)
             if batches:
@@ -1284,6 +1356,80 @@ def main() -> int:
         log(f"멈춤: {e}")
         log(f"이번 실행 파일: {run_dir}")
         return 3
+
+
+def run_split_groups(win, args, res, options, base, run_dir, stamp, report, ledger, run_id) -> int:
+    """소제목별 검토 그룹(…_1반도체, …_2삼성, …_3기타, …_4칼럼사설)에 담고 그룹마다 정렬."""
+    plan = split_groups(res.selected, base, args.group_max)
+    log("검토 그룹: " + ", ".join(f"{n}({len(k)}건)" for n, k in plan))
+    have: dict[str, set] = {}
+    for name, _ in plan:
+        ensure_group(win, name)
+    for gi, (name, _) in enumerate(plan, 1):
+        select_group(win, name)
+        n0 = group_count(win, name) or 0
+        have[name] = set(export_group(win, name, run_dir / f"그룹{gi}_전_{stamp}.xlsx")["key"]) if n0 else set()
+
+    # 담기: 검토 그룹마다, 검색어 그룹별로 한 번씩
+    first = True
+    for name, keys in plan:
+        todo = [k for k in keys if k not in have[name]]
+        if not todo:
+            continue
+        batches = plan_bulk(todo, options)
+        log(f"'{name}': {len(todo)}건을 {len(batches)}번에 담음")
+        lost_check = False
+        for spec, ks, seqs in batches:
+            t0 = time.time()
+            open_source_group(win, spec)
+            select_group(win, name)
+            n_b = group_count(win, name) or 0
+            scrap_rows(win, seqs, check_manager=first)
+            first = False
+            n_a = group_count(win, name) or 0
+            ok = n_a - n_b == len(ks)
+            lost_check |= not ok
+            log(f"   '{spec[:20]}' {len(ks)}건 ({time.time() - t0:.0f}초)" + ("" if ok else f" — 증가 {n_a - n_b}건, 끝나고 다시 확인"))
+        if lost_check:
+            mid = set(export_group(win, name, run_dir / f"{name}_중간_{stamp}.xlsx")["key"])
+            for spec, ks, seqs in plan_batches([k for k in todo if k not in mid], options):
+                for sq in seqs:
+                    open_source_group(win, spec)
+                    select_group(win, name)
+                    scrap_rows(win, [sq], check_manager=False)
+
+    # 검증 + 정렬
+    all_ok = True
+    for gi, (name, keys) in enumerate(plan, 1):
+        after = list(export_group(win, name, run_dir / f"그룹{gi}_후_{stamp}.xlsx")["key"])
+        missing = [k for k in keys if k not in after]
+        if missing:
+            raise Stop(f"'{name}'에 없는 추천 기사 {len(missing)}건: {missing[:5]}")
+        manual = [k for k in after if k not in keys and k in have[name]]
+        wrong = [k for k in after if k not in keys and k not in have[name]]
+        if wrong:
+            log(f"주의: '{name}'에 추천 외 기사 {len(wrong)}건이 잘못 담김(지우지 않음, 맨 아래에 남음): {wrong[:5]}")
+        if args.no_order:
+            continue
+        if manual:
+            log(f"'{name}': 사람이 넣은 기사 {len(manual)}건이 있어 정렬하지 않음")
+            continue
+        try:
+            reorder_visible(win, name, after, keys,
+                            check_export=lambda n=name, g=gi: list(export_group(win, n, run_dir / f"그룹{g}_첫이동_{stamp}.xlsx")["key"]))
+            final = list(export_group(win, name, run_dir / f"그룹{gi}_정렬후_{stamp}.xlsx")["key"])
+            if final[: len(keys)] != keys:
+                raise Stop("정렬 후 순서가 추천안과 다릅니다.")
+            log(f"'{name}': 정렬 검증 통과")
+        except Stop as e:
+            all_ok = False
+            log(f"'{name}': 정렬은 하지 못했습니다(기사는 모두 담겨 있음): {e}")
+    log("Serial 검증 통과(모든 검토 그룹)")
+    if not all_ok:
+        log(f"정렬 못 한 그룹은 초안 엑셀 '{report.name}'의 추천목록 순서를 참고해 주세요.")
+    ledger.finish_run(run_id, res.overall, len(res.selected), res.paper_status)
+    log(f"완료 — 검토 그룹 {len(plan)}개, 상태: {res.overall}")
+    return 0 if res.overall == "완료" else 2
 
 
 def ledger_keys(ledger: Ledger, target: date) -> list[str]:
