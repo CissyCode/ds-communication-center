@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-11-01a"
+VERSION = "2026-11-01b"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -219,6 +219,8 @@ def close_group_manager(win) -> bool:
     closed = False
     for w in _process_windows(win)[1:]:
         try:
+            if any(c in (w.element_info.class_name or "") for c in IGNORED_POPUP_CLASSES):
+                continue   # 늘 떠 있는 보조 창(검사하면 느림)
             if w.window_text() != "스크랩 그룹 관리" and not any(
                     t.window_text() == "스크랩 그룹 관리" for t in w.descendants(control_type="Text")):
                 continue
@@ -546,7 +548,20 @@ EXPORT_BUTTONS = ("btnScrapList_SaveToExcelFile_T", "btnScrapList_SaveToExcelFil
 
 
 def export_group(win, group: str, path: Path) -> pd.DataFrame:
-    """검토 그룹 기사만 체크하고 스크랩 목록 [엑셀로 내보내기]로 저장."""
+    """검토 그룹 기사만 체크하고 스크랩 목록 [엑셀로 내보내기]로 저장. 담기 직후엔 프로그램이 바빠
+    저장 창이 늦게 뜰 수 있어 한 번 더 시도한다."""
+    for attempt in range(2):
+        try:
+            return _export_group_once(win, group, path)
+        except Stop as e:
+            if attempt:
+                raise
+            log(f"그룹 내보내기 재시도: {e}")
+            dismiss_notices(win)
+            time.sleep(3)
+
+
+def _export_group_once(win, group: str, path: Path) -> pd.DataFrame:
     uncheck_all_scraps(win)
     for attempt in range(3):
         _scroll_top(win, group)   # 담기 뒤엔 목록이 아래로 내려가 있어 그룹 머리줄(체크박스)이 화면 밖일 수 있다
@@ -574,7 +589,7 @@ def export_group(win, group: str, path: Path) -> pd.DataFrame:
         btn.click_input()         # 이 버튼은 '누르기 신호'에 반응하지 않아 실제 클릭
         time.sleep(0.8)
         try:
-            save_dialog(win, path, REQUIRED_COLS)
+            save_dialog(win, path, REQUIRED_COLS, timeout=25)
             break
         except Stop as e:
             last_err = e
