@@ -102,6 +102,10 @@ class Config:
     reference_slim: bool = False      # 참고 시트에는 삼성(제목·부제목)·칼럼사설·상한으로 밀린 기사만, 나머지는 제외 시트로
     section_min: dict = field(default_factory=dict)   # {기타: 8}: 소제목별 최소 추천 건수(참고에서 점수순으로 채움)
     section_max: dict = field(default_factory=dict)   # {반도체: 45, 삼성: 20}: 소제목별 최대 추천 건수
+    page_allow_prefixes: list = field(default_factory=list)   # [A]: 면 번호가 이 글자 외의 알파벳으로 시작하면 기획면으로 제외
+    page_allow_by_paper: dict = field(default_factory=dict)   # {조선일보: [A, B]}: 신문별 허용 글자
+    hard_exclude_keywords: list = field(default_factory=list)  # 제목에 있으면 무조건 제외(참고로도 안 남김). 예: 야구(삼성 라이온즈)
+    boundary_keywords: list = field(default_factory=list)   # [이란]: 앞에 한글이 붙으면('언론이란') 일치로 안 봄
     max_total: int | None = None      # 추천 최대 건수. 넘으면 점수 낮은 기사부터 '참고'로(고정 현안은 유지)
     evening_papers: list[str] = field(default_factory=list)   # 석간: 대상일 전날 발행분을 정상으로 봄
     shape_bonus: float = 0.0          # 3~4단 폭 세로형 기사 가점
@@ -248,6 +252,10 @@ def load_config(path: str | Path, extra: list[str | Path] | None = None) -> Conf
         alert_keywords=list(c.get("alert_keywords") or []),
         volume_range=tuple(c["volume_range"]) if c.get("volume_range") else None,
         max_total=int(c["max_total"]) if c.get("max_total") else None,
+        boundary_keywords=list(c.get("boundary_keywords") or []),
+        page_allow_prefixes=[str(x).upper() for x in (c.get("page_allow_prefixes") or [])],
+        page_allow_by_paper={str(k): [str(x).upper() for x in v] for k, v in (c.get("page_allow_by_paper") or {}).items()},
+        hard_exclude_keywords=list(c.get("hard_exclude_keywords") or []),
         section_min={str(k): int(v) for k, v in (c.get("section_min") or {}).items()},
         section_max={str(k): int(v) for k, v in (c.get("section_max") or {}).items()},
         reference_slim=bool(c.get("reference_slim", False)),

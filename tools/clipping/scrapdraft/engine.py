@@ -63,6 +63,9 @@ def _is_print(kind: str) -> bool | None:
     return None
 
 
+_BOUNDARY: set = set()   # 앞에 한글이 붙어 있으면 일치로 보지 않는 말(예: '언론이란'의 '이란')
+
+
 def _hits(text: str, words: list[str]) -> list[str]:
     """'구글+AI'처럼 +로 이은 말은 모두 들어 있어야 일치."""
     text = text or ""
@@ -70,6 +73,8 @@ def _hits(text: str, words: list[str]) -> list[str]:
     def has(p: str) -> bool:
         if not p:
             return False
+        if p in _BOUNDARY:
+            return re.search(rf"(?<![가-힣]){re.escape(p)}", text) is not None
         if re.fullmatch(r"[A-Za-z]{1,3}", p):  # SK·LS·KT·MS 등은 다른 영문 단어 안에서 잡히지 않게
             return re.search(rf"(?<![A-Za-z]){re.escape(p)}(?![A-Za-z])", text) is not None
         return p in text
@@ -89,6 +94,8 @@ class Result:
 def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
                 confirmed_empty: list[str] | None = None, now: datetime | None = None) -> Result:
     confirmed_empty = confirmed_empty or []
+    global _BOUNDARY
+    _BOUNDARY = set(cfg.boundary_keywords)
     df = df[~df["is_subhead"]].copy() if not df.empty else df.copy()
 
     # 1) 같은 기사(같은 키)가 여러 검색어로 잡힌 경우 1건으로 합치고 검색어는 모은다
@@ -156,9 +163,17 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             if not _is_opinion(r, cfg):
                 df.at[i, "drop_reason"] = "제외 후보(바이라인 없음 — 기사 아님)"
                 continue
+        hx = _hits(r["title"], cfg.hard_exclude_keywords)
+        if hx:
+            df.at[i, "drop_reason"] = f"무조건 제외({hx[0]})"
+            continue
         pg = str(r["page_raw"]).strip().upper()
         if pg and cfg.exclude_page_prefixes and pg[0] in cfg.exclude_page_prefixes \
                 and r["paper"] not in cfg.exclude_page_except:
+            df.at[i, "drop_reason"] = f"제외 후보(기획면 {r['page_raw']})"
+            continue
+        allow = cfg.page_allow_by_paper.get(r["paper"], cfg.page_allow_prefixes)
+        if pg and allow and pg[0].isalpha() and pg[0].isascii() and pg[0] not in allow:
             df.at[i, "drop_reason"] = f"제외 후보(기획면 {r['page_raw']})"
             continue
         cat = str(r.get("category") or "").strip()
@@ -269,9 +284,15 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
         if base.empty or g["section"].isin(["칼럼/사설"]).all():
             continue
         top = base.groupby(["section", "subtopic"]).size().sort_values(ascending=False).index[0]
+        tsec = next((x for x in cfg.sections if x.name == top[0]), None)
+        tsub = next((t for t in (tsec.subtopics if tsec else []) if t.name == top[1]), None)
+        target_kw = [k for k in ((tsub.keywords if tsub else []) + (tsec.keywords if tsec else [])) if k not in cfg.weak_keywords]
         for i in g.index:
             if df.at[i, "section"] == "칼럼/사설":
                 continue  # 사설·칼럼은 제자리(대표 뒤에 관련기사로만 붙음)
+            if df.at[i, "section"] != top[0] and target_kw \
+                    and not _hits(f"{df.at[i, 'title']} {df.at[i, 'subtitle']}", target_kw):
+                continue  # 다른 소제목으로 옮길 땐, 그 소제목의 단서가 이 기사에도 있어야 함(SK이노가 삼성 계열사로 가지 않게)
             if (df.at[i, "section"], df.at[i, "subtopic"]) != top:
                 df.at[i, "note"] += f"같은 사안이라 {top[0]}/{top[1]}로 맞춤; "
                 df.at[i, "section"], df.at[i, "subtopic"] = top
@@ -301,7 +322,9 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
     reference.loc[reference["score"] < cfg.min_score, "note"] += "기준 점수 미달; "
 
     sel_clusters = set(selected["cluster"]) - {""}
-    pull = reference[reference["cluster"].isin(sel_clusters) & ~reference["blocked"].astype(bool)]
+    pull = reference[reference["cluster"].isin(sel_clusters) & ~reference["blocked"].astype(bool)
+                     & ~reference["reason"].str.contains("본문(검색어)", regex=False)      # 본문에서만 걸린 기사는 끌어오지 않음
+                     & (reference["score"] >= cfg.min_score * 0.5)]
     if len(pull):
         pull = pull.copy()
         pull["note"] += "같은 사안 관련기사; "
@@ -331,7 +354,9 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             if not st.max_items:
                 continue
             members = selected[(selected["section"] == sec.name) & (selected["subtopic"] == st.name)]
-            members = members[~members["title"].map(lambda t: bool(_hits(t, st.cap_exempt)))]
+            members = members[~members["title"].map(lambda t: bool(_hits(t, st.cap_exempt))).astype(bool)]
+            if members.empty:
+                continue
             gkey = members.apply(lambda r: r["cluster"] or f"_{r.name}", axis=1)
             sizes = gkey.value_counts()
             best = members.assign(_g=gkey, _n=gkey.map(sizes), _m=members["paper"].map(cfg.media_rank)) \
@@ -416,7 +441,7 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             selected = order_articles(selected, cfg)
     # 보호 규칙: 삼성+반도체(protect_all)는 제외 시트로 빠지지 않고 최소 '참고'에 남으며, 분량을 줄일 때 가장 늦게 줄인다.
     # 삼성(keep_reference)이 들어간 기사도 최소 '참고'. 온라인·가판·다른 날짜는 그대로 제외.
-    hard = ("온라인 기사", "판 중복", "발행일이 대상일 아님")
+    hard = ("온라인 기사", "판 중복", "발행일이 대상일 아님", "무조건 제외")
 
     def _text(r):
         return f"{r['title']} {r['subtitle']}"
@@ -464,7 +489,9 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
         have_n = int((selected["section"] == sec_name).sum())
         if have_n < mn and len(reference):
             cand = reference[(reference["section"] == sec_name) & (reference["is_print"] == True)  # noqa: E712
-                             & ~reference["blocked"].astype(bool)].sort_values("score", ascending=False)
+                             & ~reference["blocked"].astype(bool)
+                             & ~reference["note"].str.contains("원래 사유", regex=False)   # 제외됐다가 참고로만 남긴 기사는 안 채움
+                             & ~reference["reason"].str.contains("본문(검색어)", regex=False)].sort_values("score", ascending=False)
             add = cand.head(mn - have_n).copy()
             if len(add):
                 add["note"] += f"'{sec_name}' 최소 {mn}건 채움; "

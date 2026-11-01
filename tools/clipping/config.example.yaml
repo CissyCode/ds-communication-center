@@ -66,3 +66,4 @@ keep_reference: [가나전자]
 reference_slim: true   # 참고 시트를 꼭 볼 것만으로
 section_min: {기타: 8}
 section_max: {핵심: 45}
+boundary_keywords: [이란]
