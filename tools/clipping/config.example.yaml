@@ -67,3 +67,4 @@ reference_slim: true   # 참고 시트를 꼭 볼 것만으로
 section_min: {기타: 8}
 section_max: {핵심: 45}
 boundary_keywords: [이란]
+reference_only_keywords: [축구, 야구]   # 추천하지 않고 참고에만

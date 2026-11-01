@@ -234,6 +234,9 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
                 why.append("세로형(3~4단)")
         scores.append(round(score, 1)); sections.append(sec); subs.append(sub); reasons.append("; ".join(why)); pins.append(pin)
         bundles.append(bundle)
+        ro = _hits(r["title"], cfg.reference_only_keywords)
+        if ro:
+            why.append(f"참고로만(스포츠 등 '{ro[0]}')")
         blocked.append(any("관련 아님" in x or "참고로만" in x for x in why))
     df["score"], df["section"], df["subtopic"], df["reason"], df["pin"] = scores, sections, subs, reasons, pins
     df["bundle"] = bundles
