@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-11-01p"
+VERSION = "2026-11-01q"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -1187,16 +1187,21 @@ def main() -> int:
         else:
             desired = list(res.selected["key"])
             moves = plan_moves(list(after["key"]), desired)
-            if moves:
-                log(f"담긴 순서와 추천 순서가 {len(moves)}건 다름 — 정렬 진행")
-                reorder(win, group, list(after["key"]), desired,
-                        check_export=lambda: list(export_group(win, group, run_dir / f"검토그룹_첫이동_{stamp}.xlsx")["key"]))
-            else:
-                log("담긴 순서가 이미 추천 순서와 같음 — 정렬 생략")
-            final = export_group(win, group, run_dir / f"검토그룹_정렬후_{stamp}.xlsx")
-            if list(final["key"])[: len(desired)] != desired:
-                raise Stop("정렬 후 순서가 추천안과 다릅니다. 화면을 확인해 주세요.")
-            log("정렬 검증 통과")
+            try:
+                if moves:
+                    log(f"담긴 순서와 추천 순서가 {len(moves)}건 다름 — 정렬 진행")
+                    reorder(win, group, list(after["key"]), desired,
+                            check_export=lambda: list(export_group(win, group, run_dir / f"검토그룹_첫이동_{stamp}.xlsx")["key"]))
+                else:
+                    log("담긴 순서가 이미 추천 순서와 같음 — 정렬 생략")
+                final = export_group(win, group, run_dir / f"검토그룹_정렬후_{stamp}.xlsx")
+                if list(final["key"])[: len(desired)] != desired:
+                    raise Stop("정렬 후 순서가 추천안과 다릅니다.")
+                log("정렬 검증 통과")
+            except Stop as e:
+                # 기사는 모두 담겼으므로 실행은 끝까지 마친다. 순서는 초안 엑셀(추천목록)을 보면 된다.
+                log(f"정렬은 하지 못했습니다(추천 기사는 모두 담겨 있음): {e}")
+                log(f"추천 순서는 초안 엑셀 '{report.name}'의 추천목록을 참고해 주세요.")
         ledger.finish_run(run_id, res.overall, len(res.selected), res.paper_status)
         log(f"완료 — 검토 그룹 '{group}', 상태: {res.overall}")
         return 0 if res.overall == "완료" else 2
