@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-11-01c"
+VERSION = "2026-11-01d"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -423,6 +423,26 @@ def refresh_search(win, wait_s: int) -> list[str]:
     return read_keywords(win)
 
 
+def _all_children(item) -> list:
+    """트리 항목의 하위 항목 전부(화면 밖이라 아직 만들어지지 않은 것까지 실체화)."""
+    from pywinauto.controls.uiawrapper import UIAWrapper
+    from pywinauto.uia_defines import get_elem_interface
+    from pywinauto.uia_element_info import UIAElementInfo
+    try:
+        els = _container_elements(item)
+    except Exception:
+        return item.children(control_type="TreeItem")
+    out = []
+    for el in els:
+        try:
+            if not el.CurrentName:
+                get_elem_interface(el, "VirtualizedItem").Realize()
+        except Exception:
+            pass
+        out.append(UIAWrapper(UIAElementInfo(el)))
+    return out or item.children(control_type="TreeItem")
+
+
 def list_source_groups(win) -> list[str]:
     """'관심 키워드' 폴더의 검색어 그룹 중 지면 결과가 있는 것. 같은 검색어가 여럿이면 '검색어@매체수'."""
     tree = need(win, "treeSearchResultGroups")
@@ -433,7 +453,7 @@ def list_source_groups(win) -> list[str]:
         ft = texts(folder)
         if not ft or ft[0] != "관심 키워드":
             continue
-        for item in folder.children(control_type="TreeItem"):
+        for item in _all_children(folder):
             if item.element_info.name != "ScrapMaster5.SearchGroup":
                 continue
             t = texts(item)
@@ -488,7 +508,11 @@ def open_source_group(win, spec: str) -> int:
     if tree is not None:
         expand_search_folders(tree)
         time.sleep(0.5)
-    for item in ([] if tree is None else tree.descendants(control_type="TreeItem")):
+    cands = []
+    if tree is not None:
+        for folder in tree.children(control_type="TreeItem"):
+            cands += _all_children(folder)
+    for item in cands:
         if item.element_info.name != "ScrapMaster5.SearchGroup":
             continue
         t = texts(item)
@@ -500,6 +524,12 @@ def open_source_group(win, spec: str) -> int:
         break
     if target is None:
         raise Stop(f"검색어 그룹 '{spec}'을 찾지 못했습니다. [검색] 탭 왼쪽 '관심 키워드' 목록이 펼쳐져 있는지 확인해 주세요.")
+    try:   # 화면 밖으로 밀려 다시 가상 항목이 됐으면 실체화
+        from pywinauto.uia_defines import get_elem_interface
+        get_elem_interface(target.element_info.element, "VirtualizedItem").Realize()
+    except Exception:
+        pass
+
     def switched() -> bool:
         kw = by_id(win, "tbCurrentSearchResultKeywordInfo1")
         return kw is not None and kw.window_text().strip() == keyword
@@ -737,15 +767,33 @@ def _dump_tree(win, group: str, note: str) -> None:
         log(f"진단 기록 실패: {e}")
 
 
+def _header_visible(win, group: str) -> bool:
+    """그룹 머리줄(체크박스)이 화면 목록 안에 보이는지. (그룹 항목의 영역은 펼친 기사 전체를 포함하므로 체크박스로 판단)"""
+    tr = need(win, "treeScrapArticleList").rectangle()
+    try:
+        cb = find(group_tree_item(win, group), auto_id="cbScrapTreeGroup", control_type="CheckBox")
+        r = cb.rectangle()
+    except Exception:
+        return False
+    return r.height() > 0 and r.top >= tr.top and r.bottom <= tr.bottom
+
+
 def _scroll_top(win, group: str) -> None:
     """스크랩 목록을 맨 위로 스크롤(그룹 머리줄이 보이게)."""
     tree = need(win, "treeScrapArticleList")
     try:
         tree.iface_scroll.SetScrollPercent(-1, 0)   # -1 = 가로는 그대로
+        time.sleep(0.3)
     except Exception:
+        pass
+    if not _header_visible(win, group):
         r = tree.rectangle()
-        mouse.scroll(coords=((r.left + r.right) // 2, (r.top + r.bottom) // 2), wheel_dist=40)
-    time.sleep(0.4)
+        for _ in range(6):
+            mouse.scroll(coords=((r.left + r.right) // 2, (r.top + r.bottom) // 2), wheel_dist=20)
+            time.sleep(0.3)
+            if _header_visible(win, group):
+                break
+    time.sleep(0.2)
 
 
 def _selected_article(win, group: str):
@@ -773,9 +821,7 @@ def _focus_article(win, group: str, idx: int):
     vis = sorted(_visible_articles(win, group), key=lambda k: k.rectangle().top)
     if not vis:
         raise Stop("스크랩 목록에 보이는 기사가 없습니다.")
-    head = group_tree_item(win, group).rectangle()
-    tr = need(win, "treeScrapArticleList").rectangle()
-    if head.top < tr.top or head.bottom > tr.bottom:
+    if not _header_visible(win, group):
         raise Stop("스크랩 목록이 맨 위로 스크롤되지 않았습니다.")
     first = vis[0]
     r = first.rectangle()
