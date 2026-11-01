@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-11-01m"
+VERSION = "2026-11-01n"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -654,9 +654,9 @@ def scrap_rows(win, seqs: list[int], check_manager: bool = True) -> None:
     for n in sorted(seqs):
         gap = n - current
         while gap > 0:          # 긴 목록은 한꺼번에 많이 누르면 화면이 못 따라와 엉뚱한 줄을 누르므로 나눠서
-            step = min(gap, 8)
+            step = min(gap, 15)
             keyboard.send_keys("{DOWN %d}" % step)
-            time.sleep(0.12 + 0.02 * step)
+            time.sleep(0.1 + 0.012 * step)
             gap -= step
         time.sleep(0.25)
         keyboard.send_keys("{SPACE}")
@@ -665,6 +665,26 @@ def scrap_rows(win, seqs: list[int], check_manager: bool = True) -> None:
     result_button(win, "스크랩")
     time.sleep(1.5)
     no_popup_or_stop(win, "[스크랩]")
+
+
+def plan_bulk(keys: list[str], options: dict[str, list[tuple[str, int]]]) -> list[tuple[str, list[str], list[int]]]:
+    """검색어 그룹별로 한 번씩만 담는 계획. 여러 그룹에 있는 기사는 담을 기사가 가장 많은 그룹에 몰아준다.
+    반환: [(검색어 그룹, [기사 키...], [연번...(오름차순)]), ...]"""
+    left = set(keys)
+    by_src: dict[str, dict[str, int]] = {}
+    for k in keys:
+        for src, seq in options.get(k, []):
+            by_src.setdefault(src, {}).setdefault(k, seq)
+    missing = [k for k in keys if k not in {kk for m in by_src.values() for kk in m}]
+    if missing:
+        raise Stop(f"담을 기사 {missing[0]}의 검색어 그룹·연번을 찾지 못했습니다.")
+    out = []
+    while left:
+        src = max(by_src, key=lambda s_: len(left & set(by_src[s_])))
+        ks = sorted(left & set(by_src[src]), key=lambda k: by_src[src][k])
+        out.append((src, ks, [by_src[src][k] for k in ks]))
+        left -= set(ks)
+    return out
 
 
 def plan_batches(keys: list[str], options: dict[str, list[tuple[str, int]]]) -> list[tuple[str, list[str], list[int]]]:
@@ -818,26 +838,48 @@ def _selected_article(win, group: str):
     return None
 
 
-def _focus_article(win, group: str, idx: int):
-    """idx번째(0부터) 기사로 키보드로 이동해, 화면에 보이는 그 항목을 돌려준다.
+def _native_first(elem, auto_id: str):
+    from sm5_read import _find_all, _uia, _wrap
+    els = _find_all(elem.element_info.element, _uia().UIA_dll.UIA_AutomationIdPropertyId, auto_id)
+    return _wrap(els[0]) if els else None
 
-    맨 위로 스크롤 → 첫 기사 줄 클릭 → ↓ idx번. 목록이 알아서 그 기사까지 스크롤하고 선택한다.
-    (화면 밖 기사를 아이디로 찾는 방식은 이 프로그램에서 엉뚱한 기사를 골라서 쓰지 않는다.)"""
+
+def _focus_article(win, group: str, idx: int):
+    """idx번째(0부터) 기사로 키보드로 이동해 그 항목을 돌려준다.
+    맨 위로 스크롤 → 그룹 머리줄(이름 부분) 클릭 → ↓ (idx+1)번 → 포커스된 항목. 목록 전체를 읽지 않아 빠르다."""
+    from pywinauto.uia_defines import IUIA
+    from sm5_read import _wrap
     _scroll_top(win, group)
-    vis = sorted(_visible_articles(win, group), key=lambda k: k.rectangle().top)
-    if not vis:
-        raise Stop("스크랩 목록에 보이는 기사가 없습니다.")
-    if not _header_visible(win, group):
+    head = group_tree_item(win, group)
+    cb = _native_first(head, "cbScrapTreeGroup")
+    if cb is None:
+        raise Stop("그룹 머리줄을 찾지 못했습니다.")
+    r = cb.rectangle()
+    tr = need(win, "treeScrapArticleList").rectangle()
+    if r.height() == 0 or r.top < tr.top or r.bottom > tr.bottom:
         raise Stop("스크랩 목록이 맨 위로 스크롤되지 않았습니다.")
-    first = vis[0]
-    r = first.rectangle()
-    cbs = first.descendants(control_type="CheckBox")
-    x = (cbs[0].rectangle().right + 60) if cbs else (r.left + r.width() // 2)
-    mouse.click(coords=(min(x, r.right - 5), (r.top + r.bottom) // 2))   # 체크박스가 아닌 줄을 눌러 선택
+    mouse.click(coords=(min(r.right + 90, tr.right - 30), (r.top + r.bottom) // 2))   # 그룹 이름 쪽(체크박스 아님)
     time.sleep(0.3)
-    if idx:
-        keyboard.send_keys("{DOWN %d}" % idx)
-        time.sleep(0.3 + min(1.5, idx * 0.015))
+    gap = idx + 1
+    while gap > 0:
+        step = min(gap, 15)
+        keyboard.send_keys("{DOWN %d}" % step)
+        time.sleep(0.08 + 0.01 * step)
+        gap -= step
+    time.sleep(0.3)
+    try:
+        el = IUIA().get_focused_element()
+        w = _wrap(el)
+        if w.element_info.name == "ScrapMaster5.Article":
+            return w
+        # 포커스가 체크박스 등 하위 요소면 위로 올라가 기사 항목을 찾는다
+        p = w.parent()
+        while p is not None and p.element_info.name != "ScrapMaster5.Article":
+            p = p.parent()
+        if p is not None:
+            return p
+    except Exception:
+        pass
     sel = _selected_article(win, group)
     if sel is None:
         _dump_tree(win, group, f"focus idx={idx}")
@@ -880,7 +922,7 @@ def reorder(win, group: str, current: list[str], desired: list[str], check_expor
         raise Stop(f"스크랩 목록에서 읽은 기사 수({len(els)})가 그룹 엑셀({total})과 다릅니다. 멈춥니다.")
     moves = plan_moves(order, desired)
     log(f"정렬 시작: {len(desired)}건 중 {len(moves)}건 이동")
-    verify_top = True
+    t_start = time.time()
     for n, key in enumerate(moves, 1):
         idx = order.index(key)
         if idx == 0:
@@ -900,13 +942,6 @@ def reorder(win, group: str, current: list[str], desired: list[str], check_expor
             raise Stop("[맨 위로] 버튼이 보이지 않습니다.")
         time.sleep(0.5)
         order.insert(0, order.pop(idx))
-        if verify_top:   # '이동 시 체크 유지' 옵션이 켜져 있으면 맨 위 기사가 체크된 채로 있어야 한다
-            t = _top_checked(win, group)
-            if t is False and n == 1:
-                log("참고: 이동 뒤 체크가 풀림('체크 유지' 옵션 꺼짐) — 이동별 확인은 생략")
-                verify_top = False
-            elif t is False:
-                raise Stop(f"{n}번째 이동 뒤 맨 위 기사가 옮긴 기사가 아닙니다. 멈춥니다.")
         uncheck_all_scraps(win)
         if n == 1 and check_export is not None:
             got = check_export()
@@ -914,7 +949,7 @@ def reorder(win, group: str, current: list[str], desired: list[str], check_expor
                 raise Stop("첫 이동 결과가 계획과 다릅니다(엉뚱한 기사가 올라감). 30분 돌기 전에 멈춥니다.")
             log("첫 이동 확인 통과(엑셀로 확인)")
         if n % 10 == 0:
-            log(f"정렬 진행 {n}/{len(moves)}")
+            log(f"정렬 진행 {n}/{len(moves)} (건당 {(time.time() - t_start) / n:.1f}초)")
 
 
 def main() -> int:
@@ -926,6 +961,8 @@ def main() -> int:
     ap.add_argument("--source", action="append",
                     help="후보로 쓸 검색어 그룹(여러 번 지정 가능). 'all'이면 관심 키워드 전체. 같은 이름이 여럿이면 '이름@매체수'. 기본 '삼성 반도체'")
     ap.add_argument("--until", choices=["export", "scrap", "order"], default="order")
+    ap.add_argument("--scrap-order", action="store_true",
+                    help="추천 순서대로 여러 번 나눠 담기(검색 목록이 짧을 때만 유리). 기본은 그룹별 한 번에 담고 정렬")
     ap.add_argument("--config", default=str(HERE / "config.yaml"))
     ap.add_argument("--issues", default=str(HERE / "issues.yaml"))
     ap.add_argument("--today", default=None)
@@ -1060,10 +1097,15 @@ def main() -> int:
         for k, src, seq in df[["key", "source", "seq"]].itertuples(index=False):
             if pd.notna(seq):
                 options.setdefault(k, []).append((src, int(float(seq))))
-        batches = plan_batches(list(todo["key"]), options)
+        if args.scrap_order:
+            batches = plan_batches(list(todo["key"]), options)
+            if batches:
+                log(f"추천 순서대로 담기: {len(todo)}건을 {len(batches)}번에 나눠 담음")
+        else:
+            batches = plan_bulk(list(todo["key"]), options)
+            if batches:
+                log(f"검색어 그룹별로 한 번씩 담기: {len(todo)}건을 {len(batches)}번에 담고 뒤에 정렬")
         mismatch = False
-        if batches:
-            log(f"추천 순서대로 담기: {len(todo)}건을 {len(batches)}번에 나눠 담음")
         for b, (spec, keys, seqs) in enumerate(batches, 1):
             t0 = time.time()
             open_source_group(win, spec)
