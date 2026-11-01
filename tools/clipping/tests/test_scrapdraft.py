@@ -377,6 +377,16 @@ class ScrapDraftTest(unittest.TestCase):
         self.assertIn("S:1008", set(res.reference["key"]))
         self.assertIn("S:1009", set(res.selected["key"]))      # 매일경제 사설은 추천
 
+    def test_reference_slim(self):
+        cfg = self.cfg()
+        cfg.keep_reference = ["가나"]
+        cfg.reference_slim = True
+        res = build_draft(read_export(self.xlsx), cfg, date(2026, 11, 2))
+        for _, r in res.reference.iterrows():
+            self.assertTrue("가나" in f"{r['title']} {r['subtitle']}" or r["section"] == "칼럼/사설"
+                            or any(w in r["note"] + r["reason"] for w in ("상한", "초과", "보호", "동일 보도", "참고로만")))
+        self.assertTrue(res.removed["drop_reason"].str.startswith("참고 기준 미달").any())
+
     def test_analyze(self):
         past = self.tmp / "past"
         past.mkdir()

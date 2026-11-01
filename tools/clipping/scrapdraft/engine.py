@@ -439,7 +439,7 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
             selected = order_articles(pd.concat([selected, back]), cfg)
     if cfg.keep_reference and len(removed):
         soft = ~removed["drop_reason"].str.startswith(hard)
-        sam = removed.apply(lambda r: bool(_hits(f"{_text(r)} {r['keyword']}", cfg.keep_reference)), axis=1)
+        sam = removed.apply(lambda r: bool(_hits(_text(r), cfg.keep_reference)), axis=1)
         keep = removed[soft & sam].copy()
         if len(keep):
             keep["note"] = "삼성 포함이라 참고로 남김(원래 사유: " + keep["drop_reason"] + "); " + keep["note"]
@@ -478,6 +478,23 @@ def build_draft(df: pd.DataFrame, cfg: Config, target_date: date,
         counts = selected["cluster"].value_counts()
         selected["cluster"] = selected["cluster"].map(
             lambda c: f"{c.split('(')[0]}({counts[c]}건)" if c and counts.get(c, 0) > 1 else ("" if c else c))
+    # 참고 시트 줄이기: 사람이 볼 만한 것만 남기고 나머지(점수 낮은 일반 기사)는 제외 시트로
+    if cfg.reference_slim and len(reference):
+        opinion_names2 = {sec.name for sec in cfg.sections if sec.opinion}
+        cut_words = ("상한", "초과", "보호", "동일 보도", "참고로만")
+
+        def worth(r) -> bool:
+            if cfg.keep_reference and _hits(f"{r['title']} {r['subtitle']}", cfg.keep_reference):
+                return True
+            if r["section"] in opinion_names2:
+                return True
+            return any(w in str(r["note"]) or w in str(r["reason"]) for w in cut_words)
+        keep = reference.apply(worth, axis=1)
+        low = reference[~keep].copy()
+        if len(low):
+            low["drop_reason"] = "참고 기준 미달(삼성·칼럼사설·상한 대상 아님)"
+            removed = pd.concat([removed, low])
+            reference = reference[keep]
     reference = reference.sort_values("score", ascending=False)
 
     status, overall = paper_status(df, cfg, target_date, confirmed_empty, now)

@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-11-01r"
+VERSION = "2026-11-01t"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -1066,6 +1066,7 @@ def main() -> int:
     ap.add_argument("--source", action="append",
                     help="후보로 쓸 검색어 그룹(여러 번 지정 가능). 'all'이면 관심 키워드 전체. 같은 이름이 여럿이면 '이름@매체수'. 기본 '삼성 반도체'")
     ap.add_argument("--until", choices=["export", "scrap", "order"], default="order")
+    ap.add_argument("--order", action="store_true", help="담은 뒤 스크랩 목록 정렬을 시도(시험용, 기본은 안 함)")
     ap.add_argument("--scrap-order", action="store_true",
                     help="추천 순서대로 여러 번 나눠 담기(검색 목록이 짧을 때만 유리). 기본은 그룹별 한 번에 담고 정렬")
     ap.add_argument("--config", default=str(HERE / "config.yaml"))
@@ -1252,8 +1253,11 @@ def main() -> int:
             ledger.finish_run(run_id, res.overall, len(res.selected), res.paper_status)
             return 0
 
-        # 6) 정렬 — 사람이 넣은 기사가 있으면 정렬하지 않음
-        if extra:
+        # 6) 정렬 — 기본은 하지 않음(스크랩 목록이 화면 밖 줄을 자동화에 보여 주지 않아 안정적으로 못 함).
+        #    추천 순서는 초안 엑셀 추천목록에 있다. --order를 주면 시도한다. 사람이 넣은 기사가 있으면 하지 않음.
+        if not args.order:
+            log(f"정렬은 하지 않습니다. 추천 순서는 초안 엑셀 '{report.name}'의 추천목록을 보세요.")
+        elif extra:
             log(f"자동 추천 외 기사 {len(extra)}건이 있어 정렬하지 않습니다(수동 작업 보존).")
         else:
             desired = list(res.selected["key"])

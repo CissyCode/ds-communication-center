@@ -63,3 +63,4 @@ protect_all:
   - [가나전자]
   - [반도체, 메모리]
 keep_reference: [가나전자]
+reference_slim: true   # 참고 시트를 꼭 볼 것만으로
