@@ -39,7 +39,7 @@ from sm5_read import OUT, WINDOW_TITLE, expand_search_folders, read_keywords, re
 from sm5_read import by_id as _by_id
 
 HERE = Path(__file__).resolve().parent
-VERSION = "2026-11-02a"
+VERSION = "2026-11-02b"
 
 # 검색결과 영역(tcSearchResultTab) 기준 상대 위치(px). 5.1.11.96 화면에서 측정·시험 통과.
 FIRST_ROW_DY = 75
@@ -369,16 +369,6 @@ def save_dialog(win, path: Path, columns: list[str], timeout=10) -> Path:
         typed = edit.window_text()
     except Exception:
         typed = ""
-    if typed.strip() != str(path):   # 신호로 안 들어가면 직접 입력
-        edit.click_input()
-        keyboard.send_keys("^a{BACKSPACE}")
-        keyboard.send_keys(str(path), with_spaces=True)
-        time.sleep(0.3)
-        try:
-            typed = edit.window_text()
-        except Exception:
-            typed = "?"
-        log(f"파일 이름 직접 입력: {typed}")
     started = time.time()
     press(find(dlg, auto_id="1", control_type="Button"))
 
@@ -1245,7 +1235,7 @@ def main() -> int:
                     log(f"후보 그룹 '{spec}' 지면 0건 — 건너뜀")
                     continue
                 log(f"후보 그룹 '{spec}' 지면 {n}건 — 엑셀 저장")
-                src = export_search(win, run_dir / f"검색결과{i}_{stamp}.xlsx", args.keep_options)
+                src = export_search(win, run_dir / f"search{i}_{stamp}.xlsx", args.keep_options)
                 import shutil
                 name = f"g{abs(hash(ckey)) % 10**8}.xlsx"
                 shutil.copyfile(src, cdir / name)
@@ -1312,7 +1302,7 @@ def main() -> int:
         ensure_group(win, group)
         select_group(win, group)
         n_before = group_count(win, group) or 0
-        existing = export_group(win, group, run_dir / f"검토그룹_전_{stamp}.xlsx") if n_before else pd.DataFrame(columns=["key"])
+        existing = export_group(win, group, run_dir / f"group_before_{stamp}.xlsx") if n_before else pd.DataFrame(columns=["key"])
         have = set(existing["key"]) if not existing.empty else set()
         todo = res.selected[~res.selected["key"].isin(have)]
         log(f"검토 그룹 기존 {n_before}건, 새로 담을 {len(todo)}건")
@@ -1340,7 +1330,7 @@ def main() -> int:
             if n_a - n_b != len(keys):
                 mismatch = True
         if mismatch:   # 빠진 기사만 한 건씩 다시 담는다(잘못 담긴 기사는 지우지 않고 알림)
-            mid = export_group(win, group, run_dir / f"검토그룹_중간_{stamp}.xlsx")
+            mid = export_group(win, group, run_dir / f"group_mid_{stamp}.xlsx")
             lost = [k for k in todo["key"] if k not in set(mid["key"])]
             if lost:
                 log(f"빠진 기사 {len(lost)}건을 한 건씩 다시 담음")
@@ -1351,7 +1341,7 @@ def main() -> int:
                         scrap_rows(win, [sq])
 
         # 5) 검증
-        after = export_group(win, group, run_dir / f"검토그룹_후_{stamp}.xlsx")
+        after = export_group(win, group, run_dir / f"group_after_{stamp}.xlsx")
         missing = set(res.selected["key"]) - set(after["key"])
         mine = set(ledger_keys(ledger, target))
         extra = [k for k in after["key"] if k not in mine and k in have]          # 실행 전부터 있던 = 사람이 넣은 기사
@@ -1381,10 +1371,10 @@ def main() -> int:
                 if moves:
                     log(f"담긴 순서와 추천 순서가 {len(moves)}건 다름 — 정렬 진행")
                     reorder(win, group, list(after["key"]), desired,
-                            check_export=lambda: list(export_group(win, group, run_dir / f"검토그룹_첫이동_{stamp}.xlsx")["key"]))
+                            check_export=lambda: list(export_group(win, group, run_dir / f"group_firstmove_{stamp}.xlsx")["key"]))
                 else:
                     log("담긴 순서가 이미 추천 순서와 같음 — 정렬 생략")
-                final = export_group(win, group, run_dir / f"검토그룹_정렬후_{stamp}.xlsx")
+                final = export_group(win, group, run_dir / f"group_sorted_{stamp}.xlsx")
                 if list(final["key"])[: len(desired)] != desired:
                     raise Stop("정렬 후 순서가 추천안과 다릅니다.")
                 log("정렬 검증 통과")
@@ -1411,7 +1401,7 @@ def run_split_groups(win, args, res, options, base, run_dir, stamp, report, ledg
     for gi, (name, _) in enumerate(plan, 1):
         select_group(win, name)
         n0 = group_count(win, name) or 0
-        have[name] = set(export_group(win, name, run_dir / f"그룹{gi}_전_{stamp}.xlsx")["key"]) if n0 else set()
+        have[name] = set(export_group(win, name, run_dir / f"group{gi}_before_{stamp}.xlsx")["key"]) if n0 else set()
 
     # 담기: 검토 그룹마다, 검색어 그룹별로 한 번씩
     first = True
@@ -1434,7 +1424,7 @@ def run_split_groups(win, args, res, options, base, run_dir, stamp, report, ledg
             lost_check |= not ok
             log(f"   '{spec[:20]}' {len(ks)}건 ({time.time() - t0:.0f}초)" + ("" if ok else f" — 증가 {n_a - n_b}건, 끝나고 다시 확인"))
         if lost_check:
-            mid = set(export_group(win, name, run_dir / f"{name}_중간_{stamp}.xlsx")["key"])
+            mid = set(export_group(win, name, run_dir / f"group_mid_{stamp}.xlsx")["key"])
             for spec, ks, seqs in plan_batches([k for k in todo if k not in mid], options):
                 for sq in seqs:
                     open_source_group(win, spec)
@@ -1444,7 +1434,7 @@ def run_split_groups(win, args, res, options, base, run_dir, stamp, report, ledg
     # 검증 + 정렬
     all_ok = True
     for gi, (name, keys) in enumerate(plan, 1):
-        after = list(export_group(win, name, run_dir / f"그룹{gi}_후_{stamp}.xlsx")["key"])
+        after = list(export_group(win, name, run_dir / f"group{gi}_after_{stamp}.xlsx")["key"])
         missing = [k for k in keys if k not in after]
         if missing:
             raise Stop(f"'{name}'에 없는 추천 기사 {len(missing)}건: {missing[:5]}")
@@ -1459,8 +1449,8 @@ def run_split_groups(win, args, res, options, base, run_dir, stamp, report, ledg
             continue
         try:
             reorder_visible(win, name, after, keys,
-                            check_export=lambda n=name, g=gi: list(export_group(win, n, run_dir / f"그룹{g}_첫이동_{stamp}.xlsx")["key"]))
-            final = list(export_group(win, name, run_dir / f"그룹{gi}_정렬후_{stamp}.xlsx")["key"])
+                            check_export=lambda n=name, g=gi: list(export_group(win, n, run_dir / f"group{g}_firstmove_{stamp}.xlsx")["key"]))
+            final = list(export_group(win, name, run_dir / f"group{gi}_sorted_{stamp}.xlsx")["key"])
             if final[: len(keys)] != keys:
                 raise Stop("정렬 후 순서가 추천안과 다릅니다.")
             log(f"'{name}': 정렬 검증 통과")

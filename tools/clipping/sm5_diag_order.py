@@ -50,8 +50,8 @@ def score(a, b):
 
 def main() -> int:
     d = Path(sys.argv[1])
-    before = sorted(d.glob("검토그룹_후_*.xlsx"))[-1]
-    after = sorted(d.glob("검토그룹_정렬후_*.xlsx"))[-1]
+    before = sorted(list(d.glob("group_after_*.xlsx")) or list(d.glob("검토그룹_후_*.xlsx")))[-1]
+    after = sorted(list(d.glob("group_sorted_*.xlsx")) or list(d.glob("검토그룹_정렬후_*.xlsx")))[-1]
     draft = sorted(d.glob("검토초안_*.xlsx"))[-1]
     cur = list(read_export(before)["key"])
     fin = list(read_export(after)["key"])
