@@ -18,6 +18,10 @@
 2. 사용 API: **검색** 선택, 환경: WEB 설정(URL은 아무 값이나 가능)
 3. 발급된 **Client ID / Client Secret** 저장 (하루 25,000회 무료)
 
+> **NAVER API HUB(네이버 클라우드 콘솔)에서 발급받은 키**도 쓸 수 있습니다. 이 경우 주소(`naverapihub.apigw.ntruss.com/search/v1/news`)와
+> 인증 헤더(`X-NCP-APIGW-API-KEY-ID` / `X-NCP-APIGW-API-KEY`)가 달라서 `.env`에 `NAVER_API_HUB=true`를 추가해야 합니다.
+> (GitHub Actions에서는 Settings → Variables에 `NAVER_API_HUB=true`) 키 발급처와 설정이 맞지 않으면 401 오류가 납니다.
+
 ### 1-2. 텔레그램 봇 + 단체방
 1. 텔레그램에서 **@BotFather** → `/newbot` → 봇 이름 입력 → **토큰** 저장
 2. 기사 공유용 **단체방 생성** → 만든 봇을 멤버로 초대

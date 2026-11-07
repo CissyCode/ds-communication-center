@@ -35,6 +35,42 @@ class NaverParseTest(unittest.TestCase):
         self.assertEqual(parse_items({"items": [bad]}), [])
 
 
+class NaverRequestTest(unittest.TestCase):
+    def _capture(self, use_hub):
+        from news_bot import naver
+        resp = mock.MagicMock()
+        resp.__enter__.return_value.read.return_value = b'{"items": []}'
+        with mock.patch.object(naver.urllib.request, "urlopen", return_value=resp) as m:
+            naver.search_news("커피", "ID", "SECRET", display=2, use_hub=use_hub)
+        return m.call_args.args[0]
+
+    def test_developers_endpoint(self):
+        req = self._capture(False)
+        self.assertTrue(req.full_url.startswith("https://openapi.naver.com/v1/search/news.json?"))
+        self.assertEqual(req.get_header("X-naver-client-id"), "ID")
+
+    def test_api_hub_endpoint(self):
+        req = self._capture(True)
+        self.assertTrue(req.full_url.startswith("https://naverapihub.apigw.ntruss.com/search/v1/news?"))
+        self.assertIn("format=json", req.full_url)
+        self.assertEqual(req.get_header("X-ncp-apigw-api-key-id"), "ID")
+        self.assertEqual(req.get_header("X-ncp-apigw-api-key"), "SECRET")
+
+    def test_hub_sample_response(self):
+        # NAVER API HUB 문서의 응답 예시 (+0900 시간대)
+        payload = {"items": [{
+            "title": "인천시, 송도 아파트서 '마을기업 연계축제' 개최",
+            "originallink": "https://www.gukjenews.com/news/articleView.html?idxno=3606281",
+            "link": "https://www.gukjenews.com/news/articleView.html?idxno=3606281",
+            "description": "<b>커피</b>드립백, 나전칠기 키링",
+            "pubDate": "Thu, 11 Jun 2026 18:30:00 +0900"}]}
+        [a] = parse_items(payload)
+        self.assertEqual(a.source, "gukjenews.com")
+        self.assertEqual(a.description, "커피드립백, 나전칠기 키링")
+        self.assertFalse(a.is_naver_news)
+        self.assertEqual(a.published.utcoffset(), timedelta(hours=9))
+
+
 class FilterTest(unittest.TestCase):
     def setUp(self):
         self.articles = parse_items({"items": [

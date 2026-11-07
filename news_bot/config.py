@@ -18,6 +18,7 @@ class Credentials:
     naver_client_secret: str
     telegram_bot_token: str
     telegram_chat_id: str
+    naver_use_hub: bool = False  # NAVER API HUB(네이버 클라우드) 키 사용 여부
 
 
 @dataclass
@@ -70,6 +71,7 @@ def load_credentials(need_naver: bool = True, need_telegram: bool = True, need_c
         naver_client_secret=_env("NAVER_CLIENT_SECRET", need_naver),
         telegram_bot_token=_env("TELEGRAM_BOT_TOKEN", need_telegram),
         telegram_chat_id=_env("TELEGRAM_CHAT_ID", need_chat),
+        naver_use_hub=_env("NAVER_API_HUB", False).lower() in ("1", "true", "yes"),
     )
 
 

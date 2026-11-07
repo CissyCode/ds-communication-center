@@ -43,7 +43,7 @@ def in_quiet_hours(settings: Settings, now: datetime | None = None) -> bool:
 
 def collect(q: Query, creds, store: Store | None):
     articles = search_news(q.query, creds.naver_client_id, creds.naver_client_secret,
-                           display=q.display, sort=q.sort)
+                           display=q.display, sort=q.sort, use_hub=creds.naver_use_hub)
     picked = filters.apply(articles, q)
     if store is not None:
         picked = [a for a in picked if not store.is_sent(a)]
