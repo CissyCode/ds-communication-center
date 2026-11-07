@@ -1,0 +1,50 @@
+name: news-bot
+
+# 서버 없이 GitHub Actions로 30분마다 기사를 수집해 텔레그램 단체방에 보냅니다.
+# Settings → Secrets and variables → Actions 에 아래 4개 secret을 등록해야 동작합니다.
+# (등록 전에는 아무것도 보내지 않고 바로 종료합니다.)
+# 단체방 명령어(/news 등)는 상주 실행(python -m news_bot loop)에서만 동작합니다.
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: news-bot
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+      NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - name: Check secrets
+        id: check
+        run: |
+          if [ -z "$NAVER_CLIENT_ID" ] || [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "news-bot secrets가 없어 건너뜁니다."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.ready == 'true'
+      - uses: actions/setup-python@v5
+        if: steps.check.outputs.ready == 'true'
+        with:
+          python-version: "3.12"
+      # 발송 기록 DB를 실행 간에 유지해 같은 기사를 두 번 보내지 않게 함
+      - uses: actions/cache@v4
+        if: steps.check.outputs.ready == 'true'
+        with:
+          path: storage/news_bot.db
+          key: news-bot-db-${{ github.run_id }}
+          restore-keys: news-bot-db-
+      - name: Run news bot
+        if: steps.check.outputs.ready == 'true'
+        run: python -m news_bot run

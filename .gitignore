@@ -7,3 +7,6 @@ __pycache__/
 storage/
 
 .streamlit/secrets.toml
+
+# news_bot 비밀 값 (텔레그램 토큰, 네이버 API 키)
+.env

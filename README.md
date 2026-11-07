@@ -29,3 +29,13 @@ streamlit run main.py
 - 대부분의 화면: `common/data.py`가 `data/*.csv`를 읽는 read-only 경로
 - **MEDIA > 대응 이력**만 SQLite 기반 실제 CRUD(`repository/` → `services/` → View)로 동작 — 신규 등록/수정/Archive 가능
 - 나머지 CSV 기반 화면은 이 SQLite 쓰기 내용을 아직 반영하지 않습니다(단계적 전환 중)
+
+## 기사 공유 텔레그램 봇 (`news_bot/`)
+
+네이버 뉴스 검색 API로 지정한 검색 조건의 기사를 가져와 텔레그램 단체방에 자동 공유하는 독립 실행 봇입니다.
+Streamlit 앱과 별도로 동작하며 설정·실행 방법은 [`news_bot/README.md`](news_bot/README.md)를 참고하세요.
+
+```bash
+python -m news_bot preview   # 검색 결과 미리보기
+python -m news_bot loop      # 주기 발송 + 단체방 명령어(/news 검색어)
+```

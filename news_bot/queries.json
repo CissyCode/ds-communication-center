@@ -1,0 +1,29 @@
+{
+  "interval_minutes": 30,
+  "quiet_hours": [22, 7],
+  "queries": [
+    {
+      "name": "삼성 반도체",
+      "query": "삼성전자 반도체",
+      "include_any": ["HBM", "파운드리", "메모리", "DS부문"],
+      "exclude": ["주가", "특징주", "목표가"],
+      "sort": "date",
+      "max_per_run": 5,
+      "max_age_hours": 24
+    },
+    {
+      "name": "HBM 시장",
+      "query": "HBM",
+      "include_any": ["HBM", "고대역폭메모리"],
+      "exclude": ["주가", "특징주"],
+      "max_per_run": 5
+    },
+    {
+      "name": "반도체 정책",
+      "query": "반도체 정부 지원",
+      "include_any": ["지원", "법", "규제", "보조금", "세액공제"],
+      "naver_only": true,
+      "max_per_run": 3
+    }
+  ]
+}
